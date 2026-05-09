@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  collector:
+    build: .
+    container_name: football_collector
+    restart: always
+    volumes:
+      - ./data:/app/data
+    environment:
+      - API_BASE_URL=https://be.sb21.net/api/v2
+      - API_TIMEOUT=10
+      - LOG_LEVEL=INFO
+    command: python -m app.collector
+
+  web:
+    build: .
+    container_name: football_web
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - collector
+    environment:
+      - API_BASE_URL=https://be.sb21.net/api/v2
+    command: uvicorn app.web_server:app --host 0.0.0.0 --port 8000

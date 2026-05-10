@@ -1,142 +1,144 @@
 import re
 from datetime import datetime, timezone
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
+
 from .models import Match
 
-def parse_handicap(text: str) -> Tuple[str, float, str, float]:
-    """
-    Parse kèo chấp từ chuỗi API
-    Ví dụ: "0.25 0.92*123h 0.92*123a a" -> handicap, odds home, handicap away, odds away
-    """
-    parts = text.split()
-    if len(parts) < 4:
-        return None, 0.0, None, 0.0
-    
-    handicap = parts[0]
-    
-    # Tìm odds home (kết thúc bằng 'h') và odds away (kết thúc bằng 'a')
-    home_match = re.search(r'([-\d.]+)\*\d+h', text)
-    away_match = re.search(r'([-\d.]+)\*\d+a', text)
-    
-    home_odds = float(home_match.group(1)) if home_match else 0.0
-    away_odds = float(away_match.group(1)) if away_match else 0.0
-    
-    # Xác định bên nào được chấp (h = home, a = away)
-    side = parts[3] if len(parts) > 3 and parts[3] in ('h', 'a') else None
-    
-    if side == 'a':
-        # Away được chấp -> home chấp away
-        home_h = handicap
-        away_h = f"-{handicap}" if float(handicap) != 0 else "0"
-    elif side == 'h':
-        # Home được chấp -> away chấp home
-        home_h = f"-{handicap}" if float(handicap) != 0 else "0"
-        away_h = handicap
-    else:
-        # Kèo đồng banh
-        home_h = away_h = "0"
-    
-    return home_h, home_odds, away_h, away_odds
 
-def parse_overunder(text: str) -> Tuple[str, float, float]:
-    """
-    Parse kèo tài xỉu
-    Ví dụ: "2.5 0.95*123h 0.85*123a" -> line, over_odds, under_odds
-    """
+def _parse_handicap(text: str) -> Tuple[Optional[str], float, Optional[str], float]:
+    """Parse Asian handicap string, e.g. '0.25 0.92*123h 0.92*123a a'"""
     parts = text.split()
     if len(parts) < 2:
+        return None, 0.0, None, 0.0
+
+    handicap = parts[0]
+    home_m = re.search(r'([-\d.]+)\*\d+h', text)
+    away_m = re.search(r'([-\d.]+)\*\d+a', text)
+    home_odds = float(home_m.group(1)) if home_m else 0.0
+    away_odds = float(away_m.group(1)) if away_m else 0.0
+
+    # Side indicator: which team concedes (h = home gives away, a = away gives home)
+    side = parts[3] if len(parts) > 3 and parts[3] in ('h', 'a') else None
+
+    try:
+        hval = float(handicap)
+    except ValueError:
+        hval = 0.0
+
+    if side == 'a':
+        home_h = handicap
+        away_h = f"-{handicap}" if hval != 0 else "0"
+    elif side == 'h':
+        home_h = f"-{handicap}" if hval != 0 else "0"
+        away_h = handicap
+    else:
+        home_h = away_h = "0"
+
+    return home_h, home_odds, away_h, away_odds
+
+
+def _parse_overunder(text: str) -> Tuple[Optional[str], float, float]:
+    """Parse over/under string, e.g. '2.5 0.95*123h 0.85*123a'"""
+    parts = text.split()
+    if not parts:
         return None, 0.0, 0.0
-    
+
     line = parts[0]
-    
-    over_match = re.search(r'([-\d.]+)\*\d+h', text)
-    under_match = re.search(r'([-\d.]+)\*\d+a', text)
-    
-    over_odds = float(over_match.group(1)) if over_match else 0.0
-    under_odds = float(under_match.group(1)) if under_match else 0.0
-    
+    over_m = re.search(r'([-\d.]+)\*\d+h', text)
+    under_m = re.search(r'([-\d.]+)\*\d+a', text)
+    over_odds = float(over_m.group(1)) if over_m else 0.0
+    under_odds = float(under_m.group(1)) if under_m else 0.0
+
     return line, over_odds, under_odds
 
-def parse_1x2(text: str) -> Tuple[float, float, float]:
-    """
-    Parse kèo 1X2
-    Ví dụ: "1.12*123h 18.0*123a 6.75*123d" -> home, draw, away
-    """
-    home_match = re.search(r'([-\d.]+)\*\d+h', text)
-    away_match = re.search(r'([-\d.]+)\*\d+a', text)
-    draw_match = re.search(r'([-\d.]+)\*\d+d', text)
-    
-    home = float(home_match.group(1)) if home_match else 0.0
-    away = float(away_match.group(1)) if away_match else 0.0
-    draw = float(draw_match.group(1)) if draw_match else 0.0
-    
-    return home, draw, away
 
-def get_match_status(match_data: Dict) -> str:
-    """Xác định trạng thái trận đấu dựa trên dữ liệu API"""
-    minute = match_data.get("6", 0) // 60000 if match_data.get("6") else 0
-    status_code = match_data.get("10", 0)
-    
-    if minute <= 0:
-        return "UPCOMING"
-    elif status_code == 2:
-        return "LIVE"
-    elif status_code == 4:
-        return "HT"
-    elif status_code == 8:
-        return "LIVE"
-    elif match_data.get("16"):
+def _parse_1x2(text: str) -> Tuple[float, float, float]:
+    """Parse 1X2 string, e.g. '1.12*123h 18.0*123a 6.75*123d'"""
+    home_m = re.search(r'([-\d.]+)\*\d+h', text)
+    away_m = re.search(r'([-\d.]+)\*\d+a', text)
+    draw_m = re.search(r'([-\d.]+)\*\d+d', text)
+    return (
+        float(home_m.group(1)) if home_m else 0.0,
+        float(draw_m.group(1)) if draw_m else 0.0,
+        float(away_m.group(1)) if away_m else 0.0,
+    )
+
+
+def _get_status(match_json: Dict) -> str:
+    """
+    Determine match status from API data.
+    Status code takes priority over elapsed-minute heuristic.
+    """
+    status_code = match_json.get("10", 0)
+    minute_raw = match_json.get("6") or 0
+    minute = minute_raw // 60000 if minute_raw else 0
+
+    # Finished flag is strongest signal
+    if match_json.get("16"):
         return "FT"
-    
-    return "UNKNOWN"
+
+    # Explicit status codes
+    CODE_MAP = {
+        0: "UPCOMING",
+        1: "UPCOMING",
+        2: "LIVE",   # H1
+        3: "HT",
+        4: "HT",
+        5: "LIVE",   # H2
+        6: "LIVE",   # Extra time
+        7: "LIVE",   # Penalties
+        8: "LIVE",   # Another live variant
+        9: "FT",
+    }
+    if status_code in CODE_MAP:
+        return CODE_MAP[status_code]
+
+    # Fallback: if elapsed time suggests live
+    if minute > 0:
+        return "LIVE"
+    return "UPCOMING"
+
 
 def parse_match(comp_name: str, match_json: Dict) -> Match:
-    """Chuyển đổi JSON của một trận đấu thành đối tượng Match"""
-    
-    # Thời gian bắt đầu (UTC)
-    start_utc = datetime.strptime(match_json["0"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    
-    # Thông tin đội bóng
+    """Convert raw API match JSON into a typed Match object."""
+    start_utc = datetime.strptime(
+        match_json["0"], "%Y-%m-%dT%H:%M:%SZ"
+    ).replace(tzinfo=timezone.utc)
+
     home = match_json.get("2", "Unknown")
     away = match_json.get("3", "Unknown")
-    
-    # Tỷ số
-    score_data = match_json.get("4", {})
-    home_score = int(score_data.get("0", 0))
-    away_score = int(score_data.get("1", 0))
-    
-    # Phút hiện tại (API trả về milliseconds)
-    minute = match_json.get("6", 0) // 60000 if match_json.get("6") else 0
-    
-    # Trạng thái
-    status = get_match_status(match_json)
-    
-    # Tạo ID duy nhất cho trận đấu
-    match_id = f"{comp_name}_{home}_{away}_{start_utc.timestamp()}"
-    
-    # Lấy odds
+
+    score = match_json.get("4", {})
+    home_score = int(score.get("0", 0))
+    away_score = int(score.get("1", 0))
+
+    minute_raw = match_json.get("6") or 0
+    minute = minute_raw // 60000 if minute_raw else 0
+
+    status = _get_status(match_json)
+    match_id = f"{comp_name}_{home}_{away}_{int(start_utc.timestamp())}"
+
     odds = match_json.get("7", {})
-    
-    # Handicap (kèo chấp) - lấy phần tử đầu tiên
+
+    # Handicap
     hc_list = odds.get("5", [])
     home_h = away_h = None
     home_h_odds = away_h_odds = None
     if hc_list:
-        home_h, home_h_odds, away_h, away_h_odds = parse_handicap(hc_list[0])
-    
-    # Over/Under (tài xỉu) - lấy phần tử đầu tiên
+        home_h, home_h_odds, away_h, away_h_odds = _parse_handicap(hc_list[0])
+
+    # Over/Under
     ou_list = odds.get("3", [])
     ou_line = over_odds = under_odds = None
     if ou_list:
-        ou_line, over_odds, under_odds = parse_overunder(ou_list[0])
-    
-    # 1X2 - lấy phần tử đầu tiên
+        ou_line, over_odds, under_odds = _parse_overunder(ou_list[0])
+
+    # 1X2
     o1x2_list = odds.get("1", [])
     o1 = oX = o2 = None
     if o1x2_list:
-        o1, oX, o2 = parse_1x2(o1x2_list[0])
-    
-    # Tạo đối tượng Match
+        o1, oX, o2 = _parse_1x2(o1x2_list[0])
+
     return Match(
         id=match_id,
         competition=comp_name,
@@ -158,5 +160,5 @@ def parse_match(comp_name: str, match_json: Dict) -> Match:
         odds_x=oX,
         odds_2=o2,
         raw_data=match_json,
-        last_seen=datetime.now(timezone.utc)
+        last_seen=datetime.now(timezone.utc),
     )

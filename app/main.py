@@ -320,9 +320,15 @@ function showToast(msg) {
 
 // ------------------------------------------------------------------ api
 async function apiFetch(url, opts) {
-  const r = await fetch(url, opts);
-  if (r.status === 401) { location.href = '/login'; return null; }
-  return r.ok ? r.json() : null;
+  try {
+    const r = await fetch(url, opts);
+    if (r.status === 401) { location.href = '/login'; return null; }
+    return r.ok ? r.json() : null;
+  } catch (e) {
+    console.error('[apiFetch]', url, e.message);
+    showToast('Loi ket noi: ' + e.message);
+    return null;
+  }
 }
 
 // ------------------------------------------------------------------ status poll
@@ -534,6 +540,11 @@ async def _security_headers(request: Request, call_next):
 async def _auth_redirect(request: Request, exc):
     return RedirectResponse(url="/login", status_code=302)
 
+
+# ---- Health endpoint (no auth) -------------------------------------------
+@app.get("/api/health")
+async def health():
+    return JSONResponse({"status": "ok", "collector": app_state.to_dict(), "stats": get_stats()})
 
 # ---------------------------------------------------------------------------
 # Auth routes

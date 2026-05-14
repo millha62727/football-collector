@@ -69,6 +69,78 @@ def _verify_password(password: str, stored: str) -> bool:
     return dk.hex() == dk_hex
 
 
+def _upsert_kv(key: str, value: str) -> None:
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO collector_state (key, value, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+            """,
+            (key, value),
+        )
+
+
+def set_collector_state(**kwargs) -> None:
+    if not kwargs:
+        return
+    with _connect() as conn:
+        cur = conn.cursor()
+        for key, val in kwargs.items():
+            if isinstance(val, bool):
+                val = "true" if val else "false"
+            elif val is None:
+                val = ""
+            else:
+                val = str(val)
+            cur.execute(
+                """
+                INSERT INTO collector_state (key, value, updated_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                """,
+                (key, val),
+            )
+
+
+def get_collector_state() -> dict[str, Any]:
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT key, value FROM collector_state")
+        rows = cur.fetchall()
+    kv = {r[0]: r[1] for r in rows}
+    return {
+        "running": kv.get("running") == "true",
+        "paused": kv.get("paused") == "true",
+        "loop_count": int(kv.get("loop_count") or 0),
+        "session_saved": int(kv.get("session_saved") or 0),
+        "session_skipped": 0,
+        "error_count": int(kv.get("error_count") or 0),
+        "last_fetch_at": kv.get("last_fetch_at") or None,
+        "last_fetch_ms": int(kv.get("last_fetch_ms") or 0),
+        "last_error": kv.get("last_error") or None,
+        "api_ok": kv.get("api_ok") == "true",
+        "logs": json.loads(kv.get("logs") or "[]"),
+    }
+
+
+def send_collector_command(cmd: str) -> None:
+    _upsert_kv(f"cmd_{cmd}", "1")
+
+
+def clear_collector_command(cmd: str) -> None:
+    _upsert_kv(f"cmd_{cmd}", "0")
+
+
+def get_collector_command(cmd: str) -> bool:
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM collector_state WHERE key = %s", (f"cmd_{cmd}",))
+        row = cur.fetchone()
+    return row is not None and row[0] == "1"
+
+
 def init_db() -> None:
     admin_user = os.getenv("ADMIN_USERNAME", "admin")
     admin_pass = os.getenv("ADMIN_PASSWORD", "admin123")
@@ -116,6 +188,32 @@ def init_db() -> None:
 
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_matches_status     ON matches(status)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_matches_start_time ON matches(start_time_utc)")
+
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS collector_state (
+                        key        TEXT PRIMARY KEY,
+                        value      TEXT NOT NULL DEFAULT '',
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                # Seed default state rows (DO NOTHING if already exist)
+                cur.execute("""
+                    INSERT INTO collector_state (key, value) VALUES
+                        ('running',        'false'),
+                        ('paused',         'false'),
+                        ('loop_count',     '0'),
+                        ('session_saved',  '0'),
+                        ('error_count',    '0'),
+                        ('last_fetch_at',  ''),
+                        ('last_fetch_ms',  '0'),
+                        ('last_error',     ''),
+                        ('api_ok',         'false'),
+                        ('logs',           '[]'),
+                        ('cmd_pause',      '0'),
+                        ('cmd_resume',     '0'),
+                        ('cmd_force',      '0')
+                    ON CONFLICT (key) DO NOTHING
+                """)
 
                 # Seed admin
                 cur.execute("SELECT id FROM users WHERE username = %s", (admin_user,))

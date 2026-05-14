@@ -1,9 +1,10 @@
 """
-Background data-collection task.
-Runs inside the FastAPI event loop as an asyncio.Task.
-Controlled via AppState: pause/resume + force-fetch.
+Background data-collection task — standalone process.
+State is persisted to the collector_state DB table so the web server
+can display status and send pause/resume/force commands.
 """
 import asyncio
+import json
 import os
 import time
 from datetime import datetime, timedelta, timezone
@@ -11,15 +12,21 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 from dotenv import load_dotenv
 
-from .database import upsert_match
+from .database import (
+    clear_collector_command,
+    get_collector_command,
+    init_db,
+    set_collector_state,
+    upsert_match,
+)
 from .parser import parse_match
-from .state import AppState
 
 load_dotenv()
 
-API_BASE = os.getenv("API_BASE_URL", "https://be.sb21.net/api/v2")
-TIMEOUT_S = int(os.getenv("API_TIMEOUT", "10"))
+API_BASE      = os.getenv("API_BASE_URL", "https://be.sb21.net/api/v2")
+TIMEOUT_S     = int(os.getenv("API_TIMEOUT", "10"))
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "30"))
+CMD_POLL_S    = 3   # how often to check for commands during sleep
 
 _SKIP_KEYWORDS = ("ảo", "virtual", "esports", "soccer battle", "điện tử")
 
@@ -28,12 +35,21 @@ _SKIP_KEYWORDS = ("ảo", "virtual", "esports", "soccer battle", "điện tử")
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _log(logs: list, level: str, msg: str) -> None:
+    entry = {"t": datetime.now(timezone.utc).strftime("%H:%M:%S"), "l": level, "m": msg}
+    logs.append(entry)
+    if len(logs) > 200:
+        del logs[:-200]
+    print(f"[{entry['t']}] [{level}] {msg}", flush=True)
+    set_collector_state(logs=json.dumps(logs))
+
+
 async def _fetch(session: aiohttp.ClientSession, url: str) -> dict | None:
     headers = {"accept": "application/json", "content-type": "application/json", "lng": "vi"}
     try:
         async with session.get(
             url, headers=headers,
-            timeout=aiohttp.ClientTimeout(total=TIMEOUT_S)
+            timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
         ) as resp:
             return await resp.json() if resp.status == 200 else None
     except Exception:
@@ -41,7 +57,6 @@ async def _fetch(session: aiohttp.ClientSession, url: str) -> dict | None:
 
 
 def _extract(data) -> list[tuple[str, dict]]:
-    """Walk the nested API structure and yield (competition_name, match_json) pairs."""
     pairs: list[tuple[str, dict]] = []
     if not isinstance(data, list):
         return pairs
@@ -56,100 +71,133 @@ def _extract(data) -> list[tuple[str, dict]]:
 
 
 def _skip(name: str) -> bool:
-    low = name.lower()
-    return any(k in low for k in _SKIP_KEYWORDS)
+    return any(k in name.lower() for k in _SKIP_KEYWORDS)
 
 
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
-async def run_collector(state: AppState) -> None:
-    state.running = True
-    state.log("INFO", f"Collector started — API: {API_BASE}, poll every {POLL_INTERVAL}s")
+async def run_collector() -> None:
+    """Standalone collector — called from run_collector.py."""
+    logs: list        = []
+    loop_count        = 0
+    session_saved     = 0
+    error_count       = 0
 
-    while state.running:
-        # ---- Block here while paused ----
-        await state.pause_event.wait()
-        if not state.running:
-            break
+    init_db()
+    set_collector_state(
+        running=True, paused=False,
+        loop_count=0, session_saved=0, error_count=0,
+        last_fetch_at="", last_fetch_ms=0, last_error="", api_ok=False,
+        logs="[]",
+    )
+    # Clear any stale commands from a previous run
+    clear_collector_command("pause")
+    clear_collector_command("resume")
+    clear_collector_command("force")
 
-        t0 = time.time()
-        state.loop_count += 1
-        state.log("INFO", f"Loop #{state.loop_count} — fetching data…")
+    _log(logs, "INFO", f"Collector started — API: {API_BASE}, poll every {POLL_INTERVAL}s")
 
-        try:
-            today_url = (
-                f"{API_BASE}/getEvent"
-                "?timeRange=today&sportType=1_1&sportId=1&oddsStyle=ma&pinLeague=false"
-            )
-            tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-            tomorrow_url = (
-                f"{API_BASE}/getEventByDate"
-                f"?date={tomorrow}&sportType=1_1&sportId=1&oddsStyle=ma&pinLeague=false"
-            )
+    try:
+        while True:
+            # ---- Handle pause command ----------------------------------------
+            if get_collector_command("pause"):
+                clear_collector_command("pause")
+                clear_collector_command("resume")
+                set_collector_state(paused=True)
+                _log(logs, "INFO", "Collector paused — waiting for resume…")
+                while True:
+                    await asyncio.sleep(2)
+                    if get_collector_command("resume"):
+                        clear_collector_command("resume")
+                        set_collector_state(paused=False)
+                        _log(logs, "INFO", "Collector resumed")
+                        break
 
-            async with aiohttp.ClientSession() as session:
-                today_data, tomorrow_data = await asyncio.gather(
-                    _fetch(session, today_url),
-                    _fetch(session, tomorrow_url),
+            # ---- Fetch ----------------------------------------------------------
+            t0 = time.time()
+            loop_count += 1
+            set_collector_state(loop_count=loop_count)
+            _log(logs, "INFO", f"Loop #{loop_count} — fetching data…")
+
+            try:
+                today_url = (
+                    f"{API_BASE}/getEvent"
+                    "?timeRange=today&sportType=1_1&sportId=1&oddsStyle=ma&pinLeague=false"
+                )
+                tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+                tomorrow_url = (
+                    f"{API_BASE}/getEventByDate"
+                    f"?date={tomorrow}&sportType=1_1&sportId=1&oddsStyle=ma&pinLeague=false"
                 )
 
-            if today_data is None and tomorrow_data is None:
-                raise ConnectionError("Both API endpoints returned empty responses")
+                async with aiohttp.ClientSession() as session:
+                    today_data, tomorrow_data = await asyncio.gather(
+                        _fetch(session, today_url),
+                        _fetch(session, tomorrow_url),
+                    )
 
-            pairs: list[tuple[str, dict]] = []
-            if today_data:
-                pairs.extend(_extract(today_data))
-            if tomorrow_data:
-                pairs.extend(_extract(tomorrow_data))
+                if today_data is None and tomorrow_data is None:
+                    raise ConnectionError("Both API endpoints returned empty responses")
 
-            saved = skipped = parse_errors = 0
-            for comp_name, match_json in pairs:
-                if _skip(comp_name):
-                    skipped += 1
-                    continue
-                try:
-                    upsert_match(parse_match(comp_name, match_json))
-                    saved += 1
-                except Exception as exc:
-                    parse_errors += 1
-                    if parse_errors <= 3:
-                        state.log("WARN", f"Parse error [{comp_name}]: {exc}")
+                pairs: list[tuple[str, dict]] = []
+                if today_data:
+                    pairs.extend(_extract(today_data))
+                if tomorrow_data:
+                    pairs.extend(_extract(tomorrow_data))
 
-            elapsed = int((time.time() - t0) * 1000)
-            state.last_fetch_at = datetime.now(timezone.utc).isoformat()
-            state.last_fetch_ms = elapsed
-            state.session_saved += saved
-            state.session_skipped += skipped
-            state.api_ok = True
-            state.last_error = None
-            state.log(
-                "INFO",
-                f"OK — saved={saved} skipped={skipped} errors={parse_errors} ({elapsed} ms)",
-            )
+                saved = skipped = parse_errors = 0
+                for comp_name, match_json in pairs:
+                    if _skip(comp_name):
+                        skipped += 1
+                        continue
+                    try:
+                        upsert_match(parse_match(comp_name, match_json))
+                        saved += 1
+                    except Exception as exc:
+                        parse_errors += 1
+                        if parse_errors <= 3:
+                            _log(logs, "WARN", f"Parse error [{comp_name}]: {exc}")
 
-        except Exception as exc:
-            state.error_count += 1
-            state.last_error = str(exc)
-            state.api_ok = False
-            state.log("ERROR", f"Fetch failed: {exc}")
-            # Wait up to 60 s before retry (force-fetch interrupts early)
-            try:
-                await asyncio.wait_for(state.force_event.wait(), timeout=60.0)
-            except asyncio.TimeoutError:
-                pass
-            finally:
-                state.force_event.clear()
-            continue
+                elapsed = int((time.time() - t0) * 1000)
+                session_saved += saved
+                set_collector_state(
+                    last_fetch_at=datetime.now(timezone.utc).isoformat(),
+                    last_fetch_ms=elapsed,
+                    session_saved=session_saved,
+                    api_ok=True,
+                    last_error="",
+                )
+                _log(
+                    logs, "INFO",
+                    f"OK — saved={saved} skipped={skipped} errors={parse_errors} ({elapsed} ms)",
+                )
 
-        # ---- Normal wait: POLL_INTERVAL s, interruptible by force-fetch ----
-        try:
-            await asyncio.wait_for(state.force_event.wait(), timeout=float(POLL_INTERVAL))
-        except asyncio.TimeoutError:
-            pass
-        finally:
-            state.force_event.clear()
+            except Exception as exc:
+                error_count += 1
+                set_collector_state(error_count=error_count, api_ok=False, last_error=str(exc))
+                _log(logs, "ERROR", f"Fetch failed: {exc}")
+                # Wait up to 60 s, interruptible by force command
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline:
+                    remaining = deadline - time.monotonic()
+                    await asyncio.sleep(min(CMD_POLL_S, remaining))
+                    if get_collector_command("force"):
+                        clear_collector_command("force")
+                        break
+                continue
 
-    state.running = False
-    state.log("INFO", "Collector stopped")
+            # ---- Wait POLL_INTERVAL, interruptible by force command -----------
+            deadline = time.monotonic() + POLL_INTERVAL
+            while time.monotonic() < deadline:
+                remaining = deadline - time.monotonic()
+                await asyncio.sleep(min(CMD_POLL_S, remaining))
+                if get_collector_command("force"):
+                    clear_collector_command("force")
+                    _log(logs, "INFO", "Force-fetch triggered")
+                    break
+
+    finally:
+        set_collector_state(running=False)
+        _log(logs, "INFO", "Collector stopped")

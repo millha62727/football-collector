@@ -1,10 +1,9 @@
 """
-Football Data Dashboard — main entry point.
-Runs the web server AND the background collector in one process.
+Football Data Dashboard — web server only.
+The data collector runs as a separate process/service (run_collector.py).
 
 Start:  uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 """
-import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -12,9 +11,14 @@ from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from .auth import check_rate_limit, create_token, decode_token, require_auth, verify_credentials
-from .collector import run_collector
-from .database import get_all_matches, get_live_matches, get_stats, init_db
-from .state import app_state
+from .database import (
+    get_all_matches,
+    get_collector_state,
+    get_live_matches,
+    get_stats,
+    init_db,
+    send_collector_command,
+)
 
 # ---------------------------------------------------------------------------
 # Static HTML pages (pure strings — no f-string so CSS {} are safe)
@@ -504,17 +508,7 @@ setInterval(pollMatches, 12000);
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    app_state.setup()
-    app_state.log("INFO", "Application starting up")
-    app_state._task = asyncio.create_task(run_collector(app_state))
     yield
-    app_state.running = False
-    if app_state._task:
-        app_state._task.cancel()
-        try:
-            await app_state._task
-        except asyncio.CancelledError:
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +538,8 @@ async def _auth_redirect(request: Request, exc):
 # ---- Health endpoint (no auth) -------------------------------------------
 @app.get("/api/health")
 async def health():
-    return JSONResponse({"status": "ok", "collector": app_state.to_dict(), "stats": get_stats()})
+    state = get_collector_state()
+    return JSONResponse({"status": "ok", "collector": {k: v for k, v in state.items() if k != "logs"}, "stats": get_stats()})
 
 # ---------------------------------------------------------------------------
 # Auth routes
@@ -574,13 +569,13 @@ async def login_submit(
         )
 
     if not verify_credentials(username, password):
-        app_state.log("WARN", f"Failed login attempt from {ip}")
+        print(f"[WARN] Failed login attempt from {ip}", flush=True)
         return RedirectResponse(
             "/login?error=Sai tên đăng nhập hoặc mật khẩu.",
             status_code=302,
         )
 
-    app_state.log("INFO", f"User '{username}' logged in from {ip}")
+    print(f"[INFO] User '{username}' logged in from {ip}", flush=True)
     token = create_token(username)
     resp = RedirectResponse("/", status_code=302)
     resp.set_cookie(
@@ -613,9 +608,11 @@ async def dashboard(user: str = Depends(require_auth)):
 
 @app.get("/api/status")
 async def api_status(user: str = Depends(require_auth)):
+    state = get_collector_state()
+    logs  = state.pop("logs", [])
     return JSONResponse({
-        "collector": app_state.to_dict(),
-        "logs": app_state.logs[-80:],
+        "collector": state,
+        "logs": logs[-80:],
         "stats": get_stats(),
         "user": user,
     })
@@ -637,22 +634,17 @@ async def api_live(user: str = Depends(require_auth)):
 
 @app.post("/api/collector/pause")
 async def api_pause(user: str = Depends(require_auth)):
-    app_state.paused = True
-    app_state.pause_event.clear()
-    app_state.log("INFO", f"Collector paused by '{user}'")
+    send_collector_command("pause")
     return {"ok": True, "paused": True}
 
 
 @app.post("/api/collector/resume")
 async def api_resume(user: str = Depends(require_auth)):
-    app_state.paused = False
-    app_state.pause_event.set()
-    app_state.log("INFO", f"Collector resumed by '{user}'")
+    send_collector_command("resume")
     return {"ok": True, "paused": False}
 
 
 @app.post("/api/collector/force")
 async def api_force(user: str = Depends(require_auth)):
-    app_state.force_event.set()
-    app_state.log("INFO", f"Force-fetch triggered by '{user}'")
+    send_collector_command("force")
     return {"ok": True}

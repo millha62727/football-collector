@@ -32,5 +32,18 @@ services:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
+  collector:
+    build: .
+    container_name: football_collector
+    restart: always
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://football:football@db:5432/football
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python run_collector.py
+
 volumes:
   pgdata:

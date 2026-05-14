@@ -1,4 +1,3 @@
-import hmac
 import os
 import secrets
 import time
@@ -9,12 +8,12 @@ from typing import Optional
 import jwt
 from fastapi import Cookie, HTTPException
 
+from .database import verify_user
+
 # --- Key & config -----------------------------------------------------------
 _SECRET = os.getenv("SECRET_KEY") or secrets.token_hex(32)
 _ALGO = "HS256"
 _EXPIRE_H = int(os.getenv("TOKEN_EXPIRE_HOURS", "24"))
-_ADMIN_USER = os.getenv("ADMIN_USERNAME", "admin")
-_ADMIN_PASS = os.getenv("ADMIN_PASSWORD", "admin123")
 
 # --- Rate limiting: max 5 login attempts per IP per 60 s -------------------
 _attempts: dict[str, list[float]] = defaultdict(list)
@@ -30,10 +29,7 @@ def check_rate_limit(ip: str) -> bool:
 
 
 # --- Credential verification ------------------------------------------------
-def verify_credentials(username: str, password: str) -> bool:
-    ok_user = hmac.compare_digest(username.encode(), _ADMIN_USER.encode())
-    ok_pass = hmac.compare_digest(password.encode(), _ADMIN_PASS.encode())
-    return ok_user and ok_pass
+verify_credentials = verify_user
 
 
 # --- JWT helpers ------------------------------------------------------------

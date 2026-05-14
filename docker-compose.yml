@@ -1,14 +1,36 @@
 version: '3.8'
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: football_db
+    restart: always
+    environment:
+      POSTGRES_USER: football
+      POSTGRES_PASSWORD: football
+      POSTGRES_DB: football
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U football -d football"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   app:
     build: .
     container_name: football_dashboard
     restart: always
     ports:
-      - "8000:8000"
-    volumes:
-      - ./data:/app/data
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql://football:football@db:5432/football
+    depends_on:
+      db:
+        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+volumes:
+  pgdata:

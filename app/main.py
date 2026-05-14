@@ -397,7 +397,7 @@ function renderLive() {
   }
   el.innerHTML = live.map(m => {
     const cls = m.status === 'HT' ? 'ht' : 'live';
-    const min = m.status === 'HT' ? 'HT' : (m.minute ? m.minute + "'" : '0\'');
+    const min = m.status === 'HT' ? 'HT' : (m.minute ? m.minute + "'" : "0'");
     const ou  = m.ou_line   ? '<div class="chip">OU <b>' + m.ou_line + '</b> O' + (m.over_odds||'?') + ' U' + (m.under_odds||'?') + '</div>' : '';
     const hc  = m.home_handicap ? '<div class="chip">HC <b>' + m.home_handicap + '</b> ' + (m.home_handicap_odds||'?') + ' / <b>' + m.away_handicap + '</b> ' + (m.away_handicap_odds||'?') + '</div>' : '';
     const x2  = m.odds_1 ? '<div class="chip">1X2 <b>' + m.odds_1 + '</b> ' + (m.odds_x||'?') + ' <b>' + m.odds_2 + '</b></div>' : '';

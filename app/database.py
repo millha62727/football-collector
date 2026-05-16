@@ -190,6 +190,40 @@ def init_db() -> None:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_matches_start_time ON matches(start_time_utc)")
 
                 cur.execute("""
+                    CREATE TABLE IF NOT EXISTS match_odds_history (
+                        id                  BIGSERIAL PRIMARY KEY,
+                        match_id            TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+                        captured_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        home_handicap       TEXT,
+                        home_handicap_odds  REAL,
+                        away_handicap       TEXT,
+                        away_handicap_odds  REAL,
+                        ou_line             TEXT,
+                        over_odds           REAL,
+                        under_odds          REAL,
+                        odds_1              REAL,
+                        odds_x              REAL,
+                        odds_2              REAL
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_odds_hist_match ON match_odds_history(match_id, captured_at DESC)")
+
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS match_events (
+                        id           BIGSERIAL PRIMARY KEY,
+                        match_id     TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+                        occurred_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        event_type   TEXT NOT NULL,
+                        status       TEXT,
+                        minute       INTEGER,
+                        home_score   INTEGER,
+                        away_score   INTEGER,
+                        detail       TEXT
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_events_match ON match_events(match_id, occurred_at)")
+
+                cur.execute("""
                     CREATE TABLE IF NOT EXISTS collector_state (
                         key        TEXT PRIMARY KEY,
                         value      TEXT NOT NULL DEFAULT '',
@@ -249,9 +283,68 @@ def verify_user(username: str, password: str) -> bool:
 
 # --- Write -----------------------------------------------------------------
 
+_ODDS_FIELDS = (
+    "home_handicap", "home_handicap_odds",
+    "away_handicap", "away_handicap_odds",
+    "ou_line", "over_odds", "under_odds",
+    "odds_1", "odds_x", "odds_2",
+)
+
+
+def _odds_changed(match: Match, prev: dict) -> bool:
+    for f in _ODDS_FIELDS:
+        if getattr(match, f) != prev.get(f):
+            return True
+    return False
+
+
+def _record_odds_snapshot(cur, match: Match) -> None:
+    cur.execute(
+        """
+        INSERT INTO match_odds_history (
+            match_id,
+            home_handicap, home_handicap_odds,
+            away_handicap, away_handicap_odds,
+            ou_line, over_odds, under_odds,
+            odds_1, odds_x, odds_2
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            match.id,
+            match.home_handicap, match.home_handicap_odds,
+            match.away_handicap, match.away_handicap_odds,
+            match.ou_line, match.over_odds, match.under_odds,
+            match.odds_1, match.odds_x, match.odds_2,
+        ),
+    )
+
+
+def _record_event(cur, match: Match, event_type: str, detail: str) -> None:
+    cur.execute(
+        """
+        INSERT INTO match_events (
+            match_id, event_type, status, minute, home_score, away_score, detail
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            match.id, event_type, match.status, match.minute,
+            match.home_score, match.away_score, detail,
+        ),
+    )
+
+
 def upsert_match(match: Match) -> None:
     with _connect() as conn:
-        cur = conn.cursor()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT status, minute, home_score, away_score, "
+            "home_handicap, home_handicap_odds, away_handicap, away_handicap_odds, "
+            "ou_line, over_odds, under_odds, odds_1, odds_x, odds_2 "
+            "FROM matches WHERE id = %s",
+            (match.id,),
+        )
+        prev = cur.fetchone()
+
         cur.execute(
             """
             INSERT INTO matches (
@@ -304,6 +397,28 @@ def upsert_match(match: Match) -> None:
             ),
         )
 
+        if prev is None:
+            return
+
+        if _odds_changed(match, prev):
+            _record_odds_snapshot(cur, match)
+
+        if match.home_score != prev.get("home_score"):
+            _record_event(
+                cur, match, "GOAL",
+                f"Home {prev.get('home_score')}→{match.home_score}",
+            )
+        if match.away_score != prev.get("away_score"):
+            _record_event(
+                cur, match, "GOAL",
+                f"Away {prev.get('away_score')}→{match.away_score}",
+            )
+        if match.status != prev.get("status"):
+            _record_event(
+                cur, match, "STATUS_CHANGE",
+                f"{prev.get('status')} → {match.status}",
+            )
+
 
 # --- Read ------------------------------------------------------------------
 
@@ -341,3 +456,41 @@ def get_stats() -> dict[str, Any]:
         "ft": by_status.get("FT", 0),
         "by_status": by_status,
     }
+
+
+def get_match_by_id(match_id: str) -> Optional[dict[str, Any]]:
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM matches WHERE id = %s", (match_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def _iso(row: dict, *fields: str) -> dict:
+    for f in fields:
+        v = row.get(f)
+        if hasattr(v, "isoformat"):
+            row[f] = v.isoformat()
+    return row
+
+
+def get_odds_history(match_id: str, limit: int = 500) -> list[dict[str, Any]]:
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT * FROM match_odds_history WHERE match_id = %s "
+            "ORDER BY captured_at ASC LIMIT %s",
+            (match_id, limit),
+        )
+        return [_iso(dict(r), "captured_at") for r in cur.fetchall()]
+
+
+def get_match_events(match_id: str, limit: int = 200) -> list[dict[str, Any]]:
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            "SELECT * FROM match_events WHERE match_id = %s "
+            "ORDER BY occurred_at ASC LIMIT %s",
+            (match_id, limit),
+        )
+        return [_iso(dict(r), "occurred_at") for r in cur.fetchall()]

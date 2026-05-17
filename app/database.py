@@ -655,3 +655,171 @@ def get_timeline_stats(period: str = "day") -> dict:
         """, [list(_LIVE_STATUSES), period, period] + _EXCLUDE_COMP_PATTERNS)
         row = cur.fetchone()
         return dict(row) if row else {"matches": 0, "live": 0, "finished": 0, "competitions": 0, "goals": 0}
+
+
+# --- Bulk CSV import -------------------------------------------------------
+
+def _to_f_or_none(v):
+    """Float-or-None for REAL columns (None preserves NULL when value is missing)."""
+    if v is None or v == "":
+        return None
+    try:
+        f = float(v)
+        return f if f != 0.0 else None  # treat 0/0.0 as 'unset' to mirror live collection
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_text_or_none(v):
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s if s and s != "0" else None
+
+
+def bulk_import_csv_match(
+    competition: str,
+    home: str,
+    away: str,
+    start_time_utc,  # datetime in UTC
+    rows: list,
+) -> dict:
+    """Insert (or top-up) one match + its odds-history snapshots from a legacy CSV.
+
+    Returns: {match_id, created, rows_inserted, rows_skipped, excluded}
+    """
+    from datetime import datetime, timezone, timedelta
+    from .analyzer.parser import half_to_minute, event_status_to_status, to_f
+
+    # Skip excluded competitions outright (e-sports / virtual)
+    if is_excluded_competition(competition):
+        return {"match_id": None, "created": False, "rows_inserted": 0,
+                "rows_skipped": 0, "excluded": True}
+
+    if not rows:
+        return {"match_id": None, "created": False, "rows_inserted": 0,
+                "rows_skipped": 0, "excluded": False}
+
+    match_id = f"{competition}_{home}_{away}_{int(start_time_utc.timestamp())}"
+
+    # Build synthesized captured_at for each row, in UTC.
+    # CSV rows carry only an HH:MM:SS time recorded in local tz (Asia/Ho_Chi_Minh
+    # for the user's Windows machine). Stitch each onto the file date and roll
+    # forward a day whenever the clock wraps backwards.
+    LOCAL_TZ = timezone(timedelta(hours=7))  # GMT+7
+    base_date = start_time_utc.astimezone(LOCAL_TZ).date()
+    synth = []
+    prev_secs = -1
+    day_offset = 0
+    for r in rows:
+        t = (r.get("Time") or "").strip()
+        m = re.match(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?$", t)
+        if m:
+            hh, mm, ss = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+            secs = hh * 3600 + mm * 60 + ss
+            if prev_secs >= 0 and secs + 60 < prev_secs:
+                day_offset += 1
+            prev_secs = secs
+            d = base_date + timedelta(days=day_offset)
+            local_dt = datetime(d.year, d.month, d.day, hh, mm, ss, tzinfo=LOCAL_TZ)
+            synth.append(local_dt.astimezone(timezone.utc))
+        else:
+            # No time recorded — anchor at start
+            synth.append(start_time_utc)
+
+    last = rows[-1]
+    last_minute = half_to_minute(last.get("Half", ""))
+    last_status = event_status_to_status(last.get("Event Status", ""))
+    last_home_score = int(to_f(last.get("Home Score") or 0))
+    last_away_score = int(to_f(last.get("Away Score") or 0))
+
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Insert match row if absent — leaves any existing row untouched
+        cur.execute(
+            """
+            INSERT INTO matches (
+                id, competition, home, away, start_time_utc, status, minute,
+                home_score, away_score,
+                home_handicap, home_handicap_odds, away_handicap, away_handicap_odds,
+                ou_line, over_odds, under_odds, odds_1, odds_x, odds_2,
+                raw_data, last_seen
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            ON CONFLICT (id) DO NOTHING
+            RETURNING id
+            """,
+            (
+                match_id, competition, home, away,
+                start_time_utc.isoformat(), last_status, last_minute,
+                last_home_score, last_away_score,
+                _to_text_or_none(last.get("Home Handicap")),
+                _to_f_or_none(last.get("Home Handicap Odds")),
+                _to_text_or_none(last.get("Away Handicap")),
+                _to_f_or_none(last.get("Away Handicap Odds")),
+                _to_text_or_none(last.get("Over/Under Line")),
+                _to_f_or_none(last.get("Over Odds")),
+                _to_f_or_none(last.get("Under Odds")),
+                _to_f_or_none(last.get("1X2 Home")),
+                _to_f_or_none(last.get("1X2 Draw")),
+                _to_f_or_none(last.get("1X2 Away")),
+                None,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        created = cur.fetchone() is not None
+
+        # Pre-fetch existing captured_at to dedupe re-uploads
+        cur.execute(
+            "SELECT captured_at FROM match_odds_history WHERE match_id = %s",
+            (match_id,),
+        )
+        existing = {r["captured_at"] for r in cur.fetchall()}
+
+        inserted = skipped = 0
+        for r, cap in zip(rows, synth):
+            if cap in existing:
+                skipped += 1
+                continue
+            existing.add(cap)
+            cur.execute(
+                """
+                INSERT INTO match_odds_history (
+                    match_id, captured_at,
+                    home_handicap, home_handicap_odds,
+                    away_handicap, away_handicap_odds,
+                    ou_line, over_odds, under_odds,
+                    odds_1, odds_x, odds_2,
+                    minute, home_score, away_score, status
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """,
+                (
+                    match_id, cap,
+                    _to_text_or_none(r.get("Home Handicap")),
+                    _to_f_or_none(r.get("Home Handicap Odds")),
+                    _to_text_or_none(r.get("Away Handicap")),
+                    _to_f_or_none(r.get("Away Handicap Odds")),
+                    _to_text_or_none(r.get("Over/Under Line")),
+                    _to_f_or_none(r.get("Over Odds")),
+                    _to_f_or_none(r.get("Under Odds")),
+                    _to_f_or_none(r.get("1X2 Home")),
+                    _to_f_or_none(r.get("1X2 Draw")),
+                    _to_f_or_none(r.get("1X2 Away")),
+                    half_to_minute(r.get("Half", "")),
+                    int(to_f(r.get("Home Score") or 0)),
+                    int(to_f(r.get("Away Score") or 0)),
+                    event_status_to_status(r.get("Event Status", "")),
+                ),
+            )
+            inserted += 1
+
+    return {
+        "match_id": match_id,
+        "created": created,
+        "rows_inserted": inserted,
+        "rows_skipped": skipped,
+        "excluded": False,
+    }

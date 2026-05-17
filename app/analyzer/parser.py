@@ -28,6 +28,37 @@ def parse_half(s: str) -> Optional[tuple[int, int]]:
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
+def half_to_minute(half: str) -> int:
+    """'1H_15' -> 15, '2H_30' -> 75, 'HT' -> 45, 'FT' -> 90, 'PRE_MATCH' -> 0."""
+    s = (half or "").strip().upper()
+    if not s or s == "PRE_MATCH":
+        return 0
+    if s == "HT":
+        return 45
+    if s in ("FT", "FULL_TIME"):
+        return 90
+    p = parse_half(s)
+    if p:
+        return p[1] if p[0] == 1 else 45 + p[1]
+    return 0
+
+
+def event_status_to_status(es: str) -> str:
+    """Map legacy Event Status strings to the new system's status codes."""
+    s = (es or "").strip().upper()
+    if not s or s == "PRE_MATCH":
+        return "UPCOMING"
+    if s == "HT":
+        return "HT"
+    if s in ("FT", "FULL_TIME", "AFTER_MATCH"):
+        return "FT"
+    if s.startswith("H1") or "_H1" in s or s.startswith("INJURY_TIME_H1"):
+        return "H1"
+    if s.startswith("H2") or "_H2" in s or s.startswith("INJURY_TIME_H2"):
+        return "H2"
+    return "UPCOMING"
+
+
 def parse_fname(path_or_name: str) -> dict[str, str]:
     """Extract date/time/league/home/away from filename.
 

@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 import os
 
-from fastapi import Body, Depends, FastAPI, Form, Request
+from fastapi import Body, Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -1083,6 +1083,7 @@ table.ot tr:hover td{background:rgba(255,255,255,.02)}
         </select>
         <button class="btn-sm" onclick="doSearch()" style="flex:0 0 auto">&#x1F50D; T&#xEC;m</button>
       </div>
+      <button class="btn-sm" onclick="openImportModal()" style="width:100%;margin-top:8px;border-color:var(--green);color:var(--green)">&#x1F4E5; Import CSV</button>
     </div>
     <div class="slist" id="slist"><div class="smatch-empty">Nh&#x1EAD;p t&#x1EEB; kh&#xF3;a &#x111;&#x1EC3; t&#xEC;m ki&#x1EBF;m</div></div>
   </div>
@@ -1090,6 +1091,26 @@ table.ot tr:hover td{background:rgba(255,255,255,.02)}
     <div id="contentArea"><div class="empty">&larr; Ch&#x1ECD;n m&#x1ED9;t tr&#x1EAD;n &#x111;&#x1EA5;u &#x111;&#x1EC3; xem chi ti&#x1EBF;t</div></div>
   </div>
 </div>
+
+<!-- Import CSV modal -->
+<div id="importModalBg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:200;align-items:center;justify-content:center" onclick="if(event.target===this)closeImportModal()">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;width:560px;max-width:94vw">
+    <div style="display:flex;align-items:center;margin-bottom:14px">
+      <h3 style="margin:0;color:var(--primary);font-size:15px">&#x1F4E5; Import CSV t&#x1EEB; tool c&#x0169;</h3>
+      <button onclick="closeImportModal()" style="margin-left:auto;background:none;border:0;color:var(--muted);cursor:pointer;font-size:20px;line-height:1">&times;</button>
+    </div>
+    <div id="importDrop" tabindex="0" style="border:1px dashed var(--border);border-radius:var(--r);padding:24px;text-align:center;cursor:pointer;color:var(--muted);transition:all .15s">
+      <div style="font-size:28px;margin-bottom:6px">&#x1F4C2;</div>
+      <strong>Th&#x1EA3; file CSV v&#xE0;o &#x111;&#xE2;y</strong>
+      <div style="font-size:11px;margin-top:4px">ho&#x1EB7;c click &#x111;&#x1EC3; ch&#x1ECD;n nhi&#x1EC1;u file</div>
+      <input type="file" id="importFile" accept=".csv,text/csv" multiple style="display:none">
+    </div>
+    <div id="importProgress" style="margin-top:12px;font-size:12px;color:var(--muted);min-height:18px"></div>
+    <div id="importResult" style="margin-top:8px;font-size:12px"></div>
+    <div style="margin-top:14px;font-size:11px;color:var(--muted)">Pattern t&#xEA;n file: <code>YYYYMMDD_HHMM_&lt;league&gt;-&lt;home&gt;_vs_&lt;away&gt;.csv</code></div>
+  </div>
+</div>
+
 <div id="lockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.97);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:14px">
   <div style="font-size:52px">&#x1F512;</div>
   <div style="color:#c9d1d9;font-size:18px;font-weight:700">Phi&#xEA;n &#x111;&#xE3; b&#x1ECB; kh&#xF3;a</div>
@@ -1256,6 +1277,67 @@ function renderOddsTable(rows, home, away) {
     data.forEach(m => matches_cache[m.id] = m);
   }
 })();
+
+// ---- Import CSV ----
+function openImportModal() {
+  document.getElementById('importModalBg').style.display = 'flex';
+  document.getElementById('importProgress').textContent = '';
+  document.getElementById('importResult').innerHTML = '';
+}
+function closeImportModal() {
+  document.getElementById('importModalBg').style.display = 'none';
+}
+(function(){
+  const drop = document.getElementById('importDrop');
+  const inp = document.getElementById('importFile');
+  if (!drop || !inp) return;
+  drop.addEventListener('click', () => inp.click());
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.style.borderColor='var(--primary)'; drop.style.color='var(--primary)'; });
+  drop.addEventListener('dragleave', () => { drop.style.borderColor=''; drop.style.color=''; });
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.style.borderColor=''; drop.style.color='';
+    if (e.dataTransfer.files.length) doImport(e.dataTransfer.files);
+  });
+  inp.addEventListener('change', () => {
+    if (inp.files.length) doImport(inp.files);
+  });
+})();
+async function doImport(files) {
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  const prog = document.getElementById('importProgress');
+  const res = document.getElementById('importResult');
+  prog.textContent = 'Đang gửi ' + files.length + ' file...';
+  res.innerHTML = '';
+  try {
+    const r = await fetch('/api/data/import-csv', { method: 'POST', body: fd });
+    if (r.status === 401) { location.href = '/login'; return; }
+    const j = await r.json();
+    prog.textContent = '';
+    let h = '<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px">';
+    h += '<div><b style="color:var(--green)">✓</b> ' + j.files + ' file đã xử lý</div>';
+    h += '<div style="color:var(--muted);font-size:11px;margin-top:4px">';
+    h += 'Tạo mới: <b style="color:var(--green)">' + j.matches_created + '</b> · ';
+    h += 'Cập nhật: <b>' + j.matches_updated + '</b> · ';
+    h += 'Rows thêm: <b style="color:var(--primary)">' + j.rows_inserted + '</b> · ';
+    h += 'Bỏ qua: <b>' + j.rows_skipped + '</b>';
+    if (j.excluded) h += ' · Loại trừ: <b style="color:var(--orange)">' + j.excluded + '</b>';
+    h += '</div>';
+    if (j.errors && j.errors.length) {
+      h += '<div style="margin-top:8px;font-size:11px"><b style="color:var(--red)">Lỗi:</b><ul style="margin:4px 0 0 16px;color:var(--red)">';
+      for (const e of j.errors.slice(0, 8)) h += '<li>' + escHtml(e.filename) + ': ' + escHtml(e.reason) + '</li>';
+      if (j.errors.length > 8) h += '<li>... và ' + (j.errors.length - 8) + ' lỗi khác</li>';
+      h += '</ul></div>';
+    }
+    h += '</div>';
+    res.innerHTML = h;
+    // Refresh sidebar list
+    doSearch();
+  } catch (e) {
+    prog.textContent = '';
+    res.innerHTML = '<div style="color:var(--red)">Lỗi: ' + escHtml(e.message) + '</div>';
+  }
+}
 </script>
 <script src="/static/lock.js"></script>
 </body>
@@ -1494,3 +1576,71 @@ async def api_data_csv(match_id: str, user: str = Depends(require_auth)):
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"}
     )
+
+
+@app.post("/api/data/import-csv")
+async def api_import_csv(
+    files: list[UploadFile] = File(...),
+    user: str = Depends(require_auth),
+):
+    """Bulk-import legacy CSV files (from the old Tkinter tool) into Postgres."""
+    from datetime import datetime, timezone, timedelta
+    from .analyzer.parser import parse_fname, read_csv_text
+    from .database import bulk_import_csv_match
+
+    LOCAL_TZ = timezone(timedelta(hours=7))  # filename's timestamp is GMT+7
+
+    summary = {
+        "files": 0,
+        "matches_created": 0,
+        "matches_updated": 0,
+        "rows_inserted": 0,
+        "rows_skipped": 0,
+        "excluded": 0,
+        "errors": [],
+    }
+
+    for f in files:
+        summary["files"] += 1
+        try:
+            raw = await f.read()
+            try:
+                text = raw.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                text = raw.decode("latin-1")
+
+            meta = parse_fname(f.filename or "")
+            if not meta.get("date") or not meta.get("league"):
+                summary["errors"].append({"filename": f.filename, "reason": "filename không khớp pattern YYYYMMDD_HHMM_<league>-<home>_vs_<away>.csv"})
+                continue
+
+            dd, mm, yyyy = meta["date"].split("/")
+            hh, mi = meta["time"].split(":")
+            local_dt = datetime(int(yyyy), int(mm), int(dd), int(hh), int(mi), tzinfo=LOCAL_TZ)
+            start_utc = local_dt.astimezone(timezone.utc)
+
+            rows = read_csv_text(text)
+            if not rows:
+                summary["errors"].append({"filename": f.filename, "reason": "CSV rỗng"})
+                continue
+
+            r = bulk_import_csv_match(
+                competition=meta["league"],
+                home=meta["home"],
+                away=meta["away"],
+                start_time_utc=start_utc,
+                rows=rows,
+            )
+            if r["excluded"]:
+                summary["excluded"] += 1
+                continue
+            if r["created"]:
+                summary["matches_created"] += 1
+            else:
+                summary["matches_updated"] += 1
+            summary["rows_inserted"] += r["rows_inserted"]
+            summary["rows_skipped"] += r["rows_skipped"]
+        except Exception as e:
+            summary["errors"].append({"filename": getattr(f, "filename", "?"), "reason": str(e)[:200]})
+
+    return JSONResponse(summary)

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import time
 from contextlib import contextmanager
 from typing import Any, Optional
@@ -14,9 +15,48 @@ from .models import Match
 
 _LIVE_STATUSES = ("LIVE", "H1", "H2", "INJURY_TIME_H1", "INJURY_TIME_H2")
 
-# Competition name patterns to exclude from all listing queries (e-sports / virtual)
-_EXCLUDE_COMP_PATTERNS = ["E Soccer%", "Esoccer%", "ESoccer%", "%esports%"]
-_EXCLUDE_COMP_SQL = " AND ".join(["competition NOT ILIKE %s"] * len(_EXCLUDE_COMP_PATTERNS))
+# Competition name patterns to exclude from all listing queries
+# Covers e-sports / virtual / simulated football tournaments.
+_EXCLUDE_LIKE_PATTERNS = [
+    "%E Soccer%",
+    "%Esoccer%",
+    "%E-Soccer%",
+    "%esports%",
+    "%e-sports%",
+    "%virtual%",
+    "%ảo%",
+    "%điện tử%",
+    "%soccer battle%",
+]
+# Word-boundary regex for 'pes' so we don't accidentally match real names
+# like "Hispanic" or "Naples".
+_EXCLUDE_REGEX = r"\mpes\M"
+
+_EXCLUDE_COMP_SQL = (
+    "(" + " AND ".join(["competition NOT ILIKE %s"] * len(_EXCLUDE_LIKE_PATTERNS))
+    + " AND competition !~* %s)"
+)
+_EXCLUDE_COMP_PATTERNS = _EXCLUDE_LIKE_PATTERNS + [_EXCLUDE_REGEX]
+
+# Substring keywords (case-insensitive) used to also block these competitions
+# from being persisted to the DB in the first place. Matches the SQL filter.
+_EXCLUDE_SUBSTRINGS = (
+    "e soccer", "esoccer", "e-soccer",
+    "esports", "e-sports",
+    "virtual", "ảo", "điện tử",
+    "soccer battle",
+)
+_EXCLUDE_PES_RE = re.compile(r"\bpes\b", re.IGNORECASE)
+
+
+def is_excluded_competition(name: Optional[str]) -> bool:
+    """Return True if a competition name matches the e-sports / virtual filter."""
+    if not name:
+        return False
+    lower = name.lower()
+    if any(s in lower for s in _EXCLUDE_SUBSTRINGS):
+        return True
+    return bool(_EXCLUDE_PES_RE.search(name))
 
 # --- Connection pool -------------------------------------------------------
 
@@ -376,6 +416,9 @@ def _record_event(cur, match: Match, event_type: str, detail: str) -> None:
 
 
 def upsert_match(match: Match) -> None:
+    # Drop e-sports / virtual matches at the door — see is_excluded_competition
+    if is_excluded_competition(match.competition):
+        return
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(

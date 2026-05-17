@@ -310,6 +310,19 @@ def init_db() -> None:
                     )
                 """)
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_analyzer_owner ON analyzer_sessions(owner, updated_at DESC)")
+
+                # Telegram-delivered OTP store. One open OTP per (username, purpose).
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS login_otps (
+                        username    TEXT NOT NULL,
+                        purpose     TEXT NOT NULL,            -- 'login' or 'unlock'
+                        otp_hash    TEXT NOT NULL,
+                        expires_at  TIMESTAMPTZ NOT NULL,
+                        sent_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        used_at     TIMESTAMPTZ,
+                        PRIMARY KEY (username, purpose)
+                    )
+                """)
                 # Seed default state rows (DO NOTHING if already exist)
                 cur.execute("""
                     INSERT INTO collector_state (key, value) VALUES
@@ -359,6 +372,74 @@ def verify_user(username: str, password: str) -> bool:
     if row is None:
         return False
     return _verify_password(password, row[0])
+
+
+def user_exists(username: str) -> bool:
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM users WHERE username = %s", (username,))
+        return cur.fetchone() is not None
+
+
+# --- OTP helpers (Telegram-delivered login + idle-unlock codes) ------------
+
+def store_otp(username: str, purpose: str, otp_plain: str, ttl_seconds: int) -> None:
+    """Replace any pending OTP for (username, purpose) with a fresh one."""
+    h = _hash_password(otp_plain)
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO login_otps (username, purpose, otp_hash, expires_at, sent_at, used_at)
+            VALUES (%s, %s, %s, NOW() + (%s || ' seconds')::interval, NOW(), NULL)
+            ON CONFLICT (username, purpose) DO UPDATE
+              SET otp_hash   = EXCLUDED.otp_hash,
+                  expires_at = EXCLUDED.expires_at,
+                  sent_at    = NOW(),
+                  used_at    = NULL
+            """,
+            (username, purpose, h, str(int(ttl_seconds))),
+        )
+
+
+def verify_and_consume_otp(username: str, purpose: str, otp_plain: str) -> bool:
+    """Validate OTP and mark it consumed. Returns True only on first successful use."""
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT otp_hash, expires_at, used_at
+            FROM login_otps
+            WHERE username = %s AND purpose = %s
+            """,
+            (username, purpose),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return False
+        otp_hash, expires_at, used_at = row
+        if used_at is not None:
+            return False
+        # expires_at compared in DB; pull "now > expires_at" via a tiny query
+        cur.execute("SELECT NOW() > %s", (expires_at,))
+        if cur.fetchone()[0]:
+            return False
+        if not _verify_password(otp_plain, otp_hash):
+            return False
+        cur.execute(
+            "UPDATE login_otps SET used_at = NOW() WHERE username = %s AND purpose = %s AND used_at IS NULL",
+            (username, purpose),
+        )
+        return cur.rowcount == 1
+
+
+def invalidate_otp(username: str, purpose: str) -> None:
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM login_otps WHERE username = %s AND purpose = %s",
+            (username, purpose),
+        )
 
 
 # --- Write -----------------------------------------------------------------

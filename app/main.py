@@ -5,18 +5,22 @@ The data collector runs as a separate process/service (run_collector.py).
 Start:  uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 """
 import json
+import os
+import secrets
 from contextlib import asynccontextmanager
 from typing import Optional
 from urllib.parse import quote
 
-import os
-
-from fastapi import Body, Depends, FastAPI, File, Form, Request, UploadFile
+from fastapi import Body, Cookie, Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+# OTP / idle-lock config (read once at import). Both surfaceable to JS as well.
+_OTP_TTL = max(60, int(os.getenv("TELEGRAM_OTP_TTL", "300")))
+_IDLE_LOCK_SECONDS = max(60, int(os.getenv("IDLE_LOCK_SECONDS", "300")))
+
 from .analyzer.views import router as analyzer_router
-from .auth import check_rate_limit, create_token, decode_token, require_auth, verify_credentials
+from .auth import check_rate_limit, create_token, decode_token, require_auth
 from .database import (
     get_all_matches,
     get_collector_state,
@@ -41,35 +45,126 @@ _LOGIN_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Football Dashboard — Login</title>
 <style>
-:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--primary:#58a6ff;--danger:#f85149;--text:#c9d1d9;--muted:#8b949e;--r:6px}
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--primary:#58a6ff;--danger:#f85149;--text:#c9d1d9;--muted:#8b949e;--green:#3fb950;--r:6px}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:40px;width:100%;max-width:380px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:40px;width:100%;max-width:400px}
 .logo{text-align:center;font-size:52px;margin-bottom:12px}
 h1{text-align:center;font-size:22px;font-weight:700;margin-bottom:4px}
 .sub{text-align:center;color:var(--muted);font-size:13px;margin-bottom:28px}
 label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin-bottom:6px}
 input{width:100%;padding:10px 14px;background:#0d1117;border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:14px;margin-bottom:16px;transition:border-color .15s}
 input:focus{outline:none;border-color:var(--primary)}
+input.otp{text-align:center;font-size:22px;letter-spacing:8px;font-family:'SF Mono','Consolas',monospace}
 button{width:100%;padding:11px;background:var(--primary);border:none;border-radius:var(--r);color:#0d1117;font-size:14px;font-weight:700;cursor:pointer;margin-top:4px;transition:background .15s}
 button:hover{background:#79c0ff}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.link{background:transparent;color:var(--muted);font-weight:400;font-size:12px;text-decoration:underline;padding:6px;margin-top:8px}
+button.link:hover{background:transparent;color:var(--primary)}
 .err{background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);border-radius:var(--r);padding:10px 14px;color:var(--danger);font-size:13px;margin-bottom:16px}
+.ok{background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);border-radius:var(--r);padding:10px 14px;color:var(--green);font-size:13px;margin-bottom:16px}
+.muted{color:var(--muted);font-size:12px;margin-bottom:12px}
+.muted b{color:var(--text)}
+.hidden{display:none}
 </style>
 </head>
 <body>
 <div class="card">
   <div class="logo">&#x26BD;</div>
   <h1>Football Dashboard</h1>
-  <p class="sub">Đăng nhập để tiếp tục</p>
-  %%ERROR%%
-  <form method="post" action="/login">
+  <p class="sub">Đăng nhập bằng OTP qua Telegram</p>
+  <div id="msg"></div>
+
+  <!-- Step 1: enter username, request OTP -->
+  <div id="step1">
     <label for="u">Tên đăng nhập</label>
-    <input type="text" id="u" name="username" placeholder="admin" required autofocus>
-    <label for="p">Mật khẩu</label>
-    <input type="password" id="p" name="password" placeholder="••••••••" required>
-    <button type="submit">Đăng nhập</button>
-  </form>
+    <input type="text" id="u" placeholder="admin" autofocus autocomplete="username" onkeydown="if(event.key==='Enter')requestOtp()">
+    <button id="btnReq" onclick="requestOtp()">Gửi OTP qua Telegram</button>
+  </div>
+
+  <!-- Step 2: enter OTP -->
+  <div id="step2" class="hidden">
+    <div class="muted">Tài khoản: <b id="uShow"></b><br>OTP đã được gửi đến Telegram. Hết hạn sau <b id="ttl">5</b> phút.</div>
+    <label for="otp">Mã OTP</label>
+    <input type="text" id="otp" class="otp" inputmode="numeric" maxlength="6" placeholder="------" autocomplete="one-time-code" onkeydown="if(event.key==='Enter')verifyOtp()">
+    <button id="btnVerify" onclick="verifyOtp()">Đăng nhập</button>
+    <button class="link" onclick="resetStep()">Quay lại</button>
+    <button class="link" onclick="requestOtp(true)">Gửi lại OTP</button>
+  </div>
 </div>
+
+<script>
+const $ = id => document.getElementById(id);
+function showMsg(html, cls){ $('msg').innerHTML = html ? '<div class="'+cls+'">'+html+'</div>' : ''; }
+function escHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function requestOtp(isResend){
+  const u = $('u').value.trim();
+  if (!u) { showMsg('Nhập tên đăng nhập', 'err'); $('u').focus(); return; }
+  showMsg('Đang gửi OTP...', 'ok');
+  $('btnReq').disabled = true;
+  try {
+    const r = await fetch('/api/auth/request-otp', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username: u})
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) {
+      showMsg(escHtml(j.error || 'Không gửi được OTP'), 'err');
+      $('btnReq').disabled = false;
+      return;
+    }
+    $('uShow').textContent = u;
+    $('ttl').textContent = Math.max(1, Math.round((j.ttl_seconds||300)/60));
+    $('step1').classList.add('hidden');
+    $('step2').classList.remove('hidden');
+    showMsg(isResend ? 'Đã gửi lại OTP' : 'OTP đã được gửi qua Telegram', 'ok');
+    setTimeout(() => $('otp').focus(), 50);
+  } catch(e) {
+    showMsg('Lỗi kết nối: ' + escHtml(e.message||e), 'err');
+    $('btnReq').disabled = false;
+  }
+}
+
+async function verifyOtp(){
+  const u = $('u').value.trim();
+  const code = $('otp').value.trim();
+  if (!code) { showMsg('Nhập OTP', 'err'); return; }
+  $('btnVerify').disabled = true;
+  showMsg('Đang xác thực...', 'ok');
+  try {
+    const r = await fetch('/api/auth/verify-otp', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username: u, otp: code})
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) {
+      showMsg(escHtml(j.error || 'OTP không đúng hoặc đã hết hạn'), 'err');
+      $('otp').value = '';
+      $('otp').focus();
+      $('btnVerify').disabled = false;
+      return;
+    }
+    showMsg('Đăng nhập thành công, đang chuyển...', 'ok');
+    location.href = '/';
+  } catch(e) {
+    showMsg('Lỗi kết nối: ' + escHtml(e.message||e), 'err');
+    $('btnVerify').disabled = false;
+  }
+}
+
+function resetStep(){
+  $('step2').classList.add('hidden');
+  $('step1').classList.remove('hidden');
+  $('btnReq').disabled = false;
+  $('btnVerify').disabled = false;
+  $('otp').value = '';
+  showMsg('', '');
+  $('u').focus();
+}
+</script>
 </body>
 </html>"""
 
@@ -311,13 +406,14 @@ tr:hover td{background:rgba(255,255,255,.025)}
 
 </div>
 
-<div id="lockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.97);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:14px">
+<div id="lockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.97);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:12px">
   <div style="font-size:52px">🔒</div>
-  <div style="color:#c9d1d9;font-size:18px;font-weight:700">Phiên đã bị khóa</div>
-  <div style="color:#8b949e;font-size:13px">Nhập mật khẩu để tiếp tục</div>
-  <input id="lockPin" type="password" placeholder="Mật khẩu..." maxlength="64" style="padding:12px 20px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:16px;text-align:center;width:280px;outline:none" onkeydown="if(event.key==='Enter')lockVerify()">
+  <div style="color:#c9d1d9;font-size:18px;font-weight:700">Phiên đã bị khóa do không hoạt động</div>
+  <div id="lockMsg" style="color:#8b949e;font-size:13px;max-width:360px;text-align:center">Bấm "Xin OTP mới" để nhận mã qua Telegram.</div>
+  <button id="lockBtnReq" onclick="lockRequestOtp()" style="padding:10px 28px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:14px;font-weight:600;cursor:pointer">Xin OTP mới</button>
+  <input id="lockOtp" type="text" inputmode="numeric" maxlength="6" placeholder="------" disabled style="padding:12px 20px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:22px;letter-spacing:8px;text-align:center;width:240px;outline:none;font-family:'SF Mono','Consolas',monospace" onkeydown="if(event.key==='Enter')lockVerify()">
   <div id="lockErr" style="color:#f85149;font-size:13px;min-height:18px"></div>
-  <button onclick="lockVerify()" style="padding:10px 28px;background:#58a6ff;border:none;border-radius:6px;color:#0d1117;font-size:14px;font-weight:700;cursor:pointer">Mở khóa</button>
+  <button id="lockBtnVerify" onclick="lockVerify()" disabled style="padding:10px 28px;background:#58a6ff;border:none;border-radius:6px;color:#0d1117;font-size:14px;font-weight:700;cursor:pointer">Mở khóa</button>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -878,13 +974,14 @@ async function load(){
 load();
 setInterval(load, 12000);
 </script>
-<div id="lockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.97);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:14px">
+<div id="lockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.97);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:12px">
   <div style="font-size:52px">🔒</div>
-  <div style="color:#c9d1d9;font-size:18px;font-weight:700">Phiên đã bị khóa</div>
-  <div style="color:#8b949e;font-size:13px">Nhập mật khẩu để tiếp tục</div>
-  <input id="lockPin" type="password" placeholder="Mật khẩu..." maxlength="64" style="padding:12px 20px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:16px;text-align:center;width:280px;outline:none" onkeydown="if(event.key==='Enter')lockVerify()">
+  <div style="color:#c9d1d9;font-size:18px;font-weight:700">Phiên đã bị khóa do không hoạt động</div>
+  <div id="lockMsg" style="color:#8b949e;font-size:13px;max-width:360px;text-align:center">Bấm "Xin OTP mới" để nhận mã qua Telegram.</div>
+  <button id="lockBtnReq" onclick="lockRequestOtp()" style="padding:10px 28px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:14px;font-weight:600;cursor:pointer">Xin OTP mới</button>
+  <input id="lockOtp" type="text" inputmode="numeric" maxlength="6" placeholder="------" disabled style="padding:12px 20px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:22px;letter-spacing:8px;text-align:center;width:240px;outline:none;font-family:'SF Mono','Consolas',monospace" onkeydown="if(event.key==='Enter')lockVerify()">
   <div id="lockErr" style="color:#f85149;font-size:13px;min-height:18px"></div>
-  <button onclick="lockVerify()" style="padding:10px 28px;background:#58a6ff;border:none;border-radius:6px;color:#0d1117;font-size:14px;font-weight:700;cursor:pointer">Mở khóa</button>
+  <button id="lockBtnVerify" onclick="lockVerify()" disabled style="padding:10px 28px;background:#58a6ff;border:none;border-radius:6px;color:#0d1117;font-size:14px;font-weight:700;cursor:pointer">Mở khóa</button>
 </div>
 <script src="/static/lock.js"></script>
 </body>
@@ -1111,13 +1208,14 @@ table.ot tr:hover td{background:rgba(255,255,255,.02)}
   </div>
 </div>
 
-<div id="lockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.97);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:14px">
+<div id="lockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.97);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:12px">
   <div style="font-size:52px">&#x1F512;</div>
-  <div style="color:#c9d1d9;font-size:18px;font-weight:700">Phi&#xEA;n &#x111;&#xE3; b&#x1ECB; kh&#xF3;a</div>
-  <div style="color:#8b949e;font-size:13px">Nh&#x1EAD;p m&#x1EAD;t kh&#x1EA9;u &#x111;&#x1EC3; ti&#x1EBF;p t&#x1EE5;c</div>
-  <input id="lockPin" type="password" placeholder="M&#x1EAD;t kh&#x1EA9;u..." maxlength="64" style="padding:12px 20px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:16px;text-align:center;width:280px;outline:none" onkeydown="if(event.key==='Enter')lockVerify()">
+  <div style="color:#c9d1d9;font-size:18px;font-weight:700">Phi&#xEA;n &#x111;&#xE3; b&#x1ECB; kh&#xF3;a do kh&#xF4;ng ho&#x1EA1;t &#x111;&#x1ED9;ng</div>
+  <div id="lockMsg" style="color:#8b949e;font-size:13px;max-width:360px;text-align:center">B&#x1EA5;m "Xin OTP m&#x1edb;i" &#x111;&#x1EC3; nh&#x1EADn m&#xE3; qua Telegram.</div>
+  <button id="lockBtnReq" onclick="lockRequestOtp()" style="padding:10px 28px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:14px;font-weight:600;cursor:pointer">Xin OTP m&#x1edb;i</button>
+  <input id="lockOtp" type="text" inputmode="numeric" maxlength="6" placeholder="------" disabled style="padding:12px 20px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:22px;letter-spacing:8px;text-align:center;width:240px;outline:none;font-family:'SF Mono','Consolas',monospace" onkeydown="if(event.key==='Enter')lockVerify()">
   <div id="lockErr" style="color:#f85149;font-size:13px;min-height:18px"></div>
-  <button onclick="lockVerify()" style="padding:10px 28px;background:#58a6ff;border:none;border-radius:6px;color:#0d1117;font-size:14px;font-weight:700;cursor:pointer">M&#x1EDF; kh&#xF3;a</button>
+  <button id="lockBtnVerify" onclick="lockVerify()" disabled style="padding:10px 28px;background:#58a6ff;border:none;border-radius:6px;color:#0d1117;font-size:14px;font-weight:700;cursor:pointer">M&#x1EDF; kh&#xF3;a</button>
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -1503,38 +1601,74 @@ async def health():
 # ---------------------------------------------------------------------------
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_page(error: str = "", auth_token: Optional[str] = None):
-    # Already logged in?
+async def login_page(auth_token: Optional[str] = Cookie(default=None)):
     if auth_token and decode_token(auth_token):
         return RedirectResponse("/", status_code=302)
-    err_html = f'<div class="err">{error}</div>' if error else ""
-    return HTMLResponse(_LOGIN_HTML.replace("%%ERROR%%", err_html))
+    return HTMLResponse(_LOGIN_HTML)
 
 
-@app.post("/login")
-async def login_submit(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-):
+@app.post("/api/auth/request-otp")
+async def api_request_otp(request: Request, payload: dict = Body(...)):
+    """Generate a one-time OTP and push it to all configured Telegram chats."""
+    from .database import store_otp, user_exists
+    from . import telegram as tg
+
     ip = request.client.host if request.client else "unknown"
-
     if not check_rate_limit(ip):
-        return RedirectResponse(
-            "/login?error=Quá nhiều lần thử. Vui lòng đợi 1 phút.",
-            status_code=302,
+        return JSONResponse(
+            {"ok": False, "error": "Quá nhiều lần thử. Vui lòng đợi 1 phút."},
+            status_code=429,
         )
 
-    if not verify_credentials(username, password):
-        print(f"[WARN] Failed login attempt from {ip}", flush=True)
-        return RedirectResponse(
-            "/login?error=Sai tên đăng nhập hoặc mật khẩu.",
-            status_code=302,
+    username = (payload.get("username") or "").strip()
+    if not username:
+        return JSONResponse({"ok": False, "error": "Thiếu tên đăng nhập"}, status_code=400)
+    if not user_exists(username):
+        # Don't leak which usernames exist; respond identically with a 200,
+        # but skip the Telegram send.
+        print(f"[WARN] OTP requested for unknown user '{username}' from {ip}", flush=True)
+        return JSONResponse({"ok": True, "ttl_seconds": _OTP_TTL})
+    if not tg.is_configured():
+        return JSONResponse(
+            {"ok": False, "error": "Bot Telegram chưa được cấu hình (.env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS)"},
+            status_code=500,
         )
 
-    print(f"[INFO] User '{username}' logged in from {ip}", flush=True)
+    otp = f"{secrets.randbelow(1_000_000):06d}"
+    store_otp(username, "login", otp, _OTP_TTL)
+    result = tg.send_login_otp(username, otp, _OTP_TTL)
+    if not result.get("ok"):
+        return JSONResponse(
+            {"ok": False, "error": f"Không gửi được Telegram: {result.get('error') or ''}"},
+            status_code=502,
+        )
+    print(f"[INFO] OTP sent to {result['sent']}/{result['total']} chats for user '{username}' (login)", flush=True)
+    return JSONResponse({"ok": True, "ttl_seconds": _OTP_TTL})
+
+
+@app.post("/api/auth/verify-otp")
+async def api_verify_otp(request: Request, payload: dict = Body(...)):
+    from .database import verify_and_consume_otp
+
+    ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(ip):
+        return JSONResponse(
+            {"ok": False, "error": "Quá nhiều lần thử. Vui lòng đợi 1 phút."},
+            status_code=429,
+        )
+
+    username = (payload.get("username") or "").strip()
+    otp = (payload.get("otp") or "").strip()
+    if not username or not otp:
+        return JSONResponse({"ok": False, "error": "Thiếu username hoặc OTP"}, status_code=400)
+
+    if not verify_and_consume_otp(username, "login", otp):
+        print(f"[WARN] Failed OTP verify for '{username}' from {ip}", flush=True)
+        return JSONResponse({"ok": False, "error": "OTP không đúng hoặc đã hết hạn"}, status_code=401)
+
+    print(f"[INFO] User '{username}' logged in via OTP from {ip}", flush=True)
     token = create_token(username)
-    resp = RedirectResponse("/", status_code=302)
+    resp = JSONResponse({"ok": True})
     resp.set_cookie(
         "auth_token", token,
         httponly=True, samesite="lax", secure=False,
@@ -1644,13 +1778,44 @@ async def data_browser_page(user: str = Depends(require_auth)):
     return HTMLResponse(_DATA_HTML)
 
 
-@app.post("/api/lock-verify")
-async def api_lock_verify(payload: dict = Body(...), user: str = Depends(require_auth)):
-    from .auth import verify_credentials
-    password = payload.get("password", "")
-    if verify_credentials(user, password):
+@app.post("/api/lock/request-otp")
+async def api_lock_request_otp(user: str = Depends(require_auth)):
+    """Send an unlock-OTP to the configured Telegram chats for the locked user."""
+    from .database import store_otp
+    from . import telegram as tg
+
+    if not tg.is_configured():
+        return JSONResponse(
+            {"ok": False, "error": "Bot Telegram chưa được cấu hình"},
+            status_code=500,
+        )
+    otp = f"{secrets.randbelow(1_000_000):06d}"
+    store_otp(user, "unlock", otp, _OTP_TTL)
+    result = tg.send_unlock_otp(user, otp, _OTP_TTL)
+    if not result.get("ok"):
+        return JSONResponse(
+            {"ok": False, "error": f"Không gửi được Telegram: {result.get('error') or ''}"},
+            status_code=502,
+        )
+    print(f"[INFO] Unlock OTP sent to {result['sent']}/{result['total']} chats for '{user}'", flush=True)
+    return {"ok": True, "ttl_seconds": _OTP_TTL}
+
+
+@app.post("/api/lock/verify-otp")
+async def api_lock_verify_otp(payload: dict = Body(...), user: str = Depends(require_auth)):
+    from .database import verify_and_consume_otp
+    otp = (payload.get("otp") or "").strip()
+    if not otp:
+        return JSONResponse({"ok": False, "error": "Thiếu OTP"}, status_code=400)
+    if verify_and_consume_otp(user, "unlock", otp):
         return {"ok": True}
-    return JSONResponse({"ok": False}, status_code=401)
+    return JSONResponse({"ok": False, "error": "OTP không đúng hoặc đã hết hạn"}, status_code=401)
+
+
+@app.get("/api/lock/config")
+async def api_lock_config(user: str = Depends(require_auth)):
+    """Frontend reads idle timeout from here so the value lives in .env only."""
+    return {"idle_seconds": _IDLE_LOCK_SECONDS, "otp_ttl_seconds": _OTP_TTL}
 
 
 @app.get("/api/stats/timeline")

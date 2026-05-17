@@ -245,38 +245,6 @@ def back_chap(rows: list[dict[str, str]], idx: int) -> tuple[Optional[float], Op
     return None, None
 
 
-def mode_chap(rows_subset: list[dict[str, str]]) -> tuple[Optional[float], Optional[str]]:
-    pairs = [get_chap_val(r) for r in rows_subset]
-    pairs = [(v, s) for v, s in pairs if v is not None]
-    if not pairs:
-        return None, None
-    return Counter(pairs).most_common(1)[0][0]
-
-
-# ---- Display helpers -------------------------------------------------------
-
-def dg_fmt(val: Optional[float]) -> tuple[str, str]:
-    """Return (label, color) for d/g result fields."""
-    if val is None:
-        return "-", "gray"
-    if abs(val + 0.25) < 1e-9:
-        return "-1/2", "#333333"
-    if abs(val - 0.25) < 1e-9:
-        return "1/2", "#333333"
-    if val == 0:
-        return "Hòa", "#aa7700"
-    return ("Thắng", "#1060d0") if val > 0 else ("Thua", "#cc0000")
-
-
-def side_color(side: Optional[str]) -> str:
-    """Color for the [a] handicap text based on which side is favored."""
-    if side == "home":
-        return "#006600"   # green
-    if side == "level":
-        return "#555555"   # gray
-    return "#880088"       # purple (away or None)
-
-
 # ---- Main compute ---------------------------------------------------------
 
 def compute(

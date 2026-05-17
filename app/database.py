@@ -14,6 +14,10 @@ from .models import Match
 
 _LIVE_STATUSES = ("LIVE", "H1", "H2", "INJURY_TIME_H1", "INJURY_TIME_H2")
 
+# Competition name patterns to exclude from all listing queries (e-sports / virtual)
+_EXCLUDE_COMP_PATTERNS = ["E Soccer%", "Esoccer%", "ESoccer%", "%esports%"]
+_EXCLUDE_COMP_SQL = " AND ".join(["competition NOT ILIKE %s"] * len(_EXCLUDE_COMP_PATTERNS))
+
 # --- Connection pool -------------------------------------------------------
 
 _pool: Optional[ThreadedConnectionPool] = None
@@ -465,7 +469,11 @@ def upsert_match(match: Match) -> None:
 def get_all_matches(limit: int = 500) -> list[dict[str, Any]]:
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("SELECT * FROM matches ORDER BY start_time_utc DESC LIMIT %s", (limit,))
+        cur.execute(
+            f"SELECT * FROM matches WHERE {_EXCLUDE_COMP_SQL} "
+            f"ORDER BY start_time_utc DESC LIMIT %s",
+            _EXCLUDE_COMP_PATTERNS + [limit],
+        )
         return [dict(r) for r in cur.fetchall()]
 
 
@@ -473,8 +481,9 @@ def get_live_matches() -> list[dict[str, Any]]:
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
-            "SELECT * FROM matches WHERE status = ANY(%s) ORDER BY start_time_utc",
-            (list(_LIVE_STATUSES),),
+            f"SELECT * FROM matches WHERE status = ANY(%s) AND {_EXCLUDE_COMP_SQL} "
+            f"ORDER BY start_time_utc",
+            [list(_LIVE_STATUSES)] + _EXCLUDE_COMP_PATTERNS,
         )
         return [dict(r) for r in cur.fetchall()]
 
@@ -482,9 +491,15 @@ def get_live_matches() -> list[dict[str, Any]]:
 def get_stats() -> dict[str, Any]:
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("SELECT status, COUNT(*) AS cnt FROM matches GROUP BY status")
+        cur.execute(
+            f"SELECT status, COUNT(*) AS cnt FROM matches WHERE {_EXCLUDE_COMP_SQL} GROUP BY status",
+            _EXCLUDE_COMP_PATTERNS,
+        )
         rows = cur.fetchall()
-        cur.execute("SELECT COUNT(*) FROM matches")
+        cur.execute(
+            f"SELECT COUNT(*) FROM matches WHERE {_EXCLUDE_COMP_SQL}",
+            _EXCLUDE_COMP_PATTERNS,
+        )
         total = cur.fetchone()["count"]
 
     by_status = {r["status"]: r["cnt"] for r in rows}
@@ -560,8 +575,8 @@ def get_match_events(match_id: str, limit: int = 200) -> list[dict[str, Any]]:
 def search_matches(q: str = "", date_from: str = "", date_to: str = "", status: str = "", limit: int = 300) -> list[dict]:
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        filters = []
-        params: list = []
+        filters = [_EXCLUDE_COMP_SQL]
+        params: list = list(_EXCLUDE_COMP_PATTERNS)
         if q:
             filters.append("(home ILIKE %s OR away ILIKE %s OR competition ILIKE %s)")
             p = f"%{q}%"
@@ -575,7 +590,7 @@ def search_matches(q: str = "", date_from: str = "", date_to: str = "", status: 
         if status:
             filters.append("status = %s")
             params.append(status)
-        where = ("WHERE " + " AND ".join(filters)) if filters else ""
+        where = "WHERE " + " AND ".join(filters)
         params.append(limit)
         cur.execute(f"SELECT id,competition,home,away,start_time_utc,status,minute,home_score,away_score FROM matches {where} ORDER BY start_time_utc DESC LIMIT %s", params)
         return [dict(r) for r in cur.fetchall()]
@@ -593,6 +608,7 @@ def get_timeline_stats(period: str = "day") -> dict:
                 COALESCE(SUM(home_score + away_score), 0) AS goals
             FROM matches
             WHERE date_trunc(%s, start_time_utc::timestamptz) = date_trunc(%s, NOW())
-        """, (list(_LIVE_STATUSES), period, period))
+              AND """ + _EXCLUDE_COMP_SQL + """
+        """, [list(_LIVE_STATUSES), period, period] + _EXCLUDE_COMP_PATTERNS)
         row = cur.fetchone()
         return dict(row) if row else {"matches": 0, "live": 0, "finished": 0, "competitions": 0, "goals": 0}

@@ -7,10 +7,15 @@ Start:  uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 import json
 from contextlib import asynccontextmanager
 from typing import Optional
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+import os
 
+from fastapi import Body, Depends, FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
+
+from .analyzer.views import router as analyzer_router
 from .auth import check_rate_limit, create_token, decode_token, require_auth, verify_credentials
 from .database import (
     get_all_matches,
@@ -21,6 +26,7 @@ from .database import (
     get_odds_history,
     get_stats,
     init_db,
+    search_matches,
     send_collector_command,
 )
 
@@ -196,6 +202,9 @@ tr:hover td{background:rgba(255,255,255,.025)}
     <span style="color:var(--border)">|</span>
     <span class="hdr-user" id="hdrUser"></span>
   </div>
+  <a href="/analyzer" class="btn-sm" style="text-decoration:none;display:inline-block">🔍 Analyzer</a>
+  <a href="/data" class="btn-sm" style="text-decoration:none">📦 Dữ liệu</a>
+  <button class="btn-sm" onclick="goDisguise()">🔄 Đổi</button>
   <form method="post" action="/logout" style="margin:0">
     <button class="btn-sm danger" type="submit">Đăng xuất</button>
   </form>
@@ -249,24 +258,46 @@ tr:hover td{background:rgba(255,255,255,.025)}
       <input class="tinput" id="searchInput" type="search" placeholder="Tìm đội, giải đấu…">
       <select class="tsel" id="statusFilter">
         <option value="">Tất cả trạng thái</option>
-        <option value="LIVE">LIVE</option>
+        <option value="H1">H1 (Hiệp 1)</option>
+        <option value="H2">H2 (Hiệp 2)</option>
         <option value="HT">HT</option>
         <option value="UPCOMING">UPCOMING</option>
         <option value="FT">FT</option>
+      </select>
+      <select class="tsel" id="sortSelect">
+        <option value="">Mặc định</option>
+        <option value="recent_goal">Gần đây có bàn</option>
+        <option value="high_goals">&gt;3 bàn thắng</option>
+        <option value="major">Giải lớn</option>
+        <option value="pinned">Ghim ★</option>
       </select>
     </div>
     <div class="twrap">
       <table>
         <thead>
           <tr>
+            <th style="width:28px"></th>
             <th>Giải đấu</th><th>Đội nhà</th><th>Đội khách</th>
             <th style="text-align:center">Tỷ số</th><th>Trạng thái</th><th>Phút</th>
-            <th>Tài xỉu</th><th>Kèo chấp</th><th>1X2</th><th>Giờ (GMT+7)</th>
+            <th>Tài xỉu</th><th>Kèo chấp</th><th>1X2</th><th>Giờ (GMT+7)</th><th></th>
           </tr>
         </thead>
         <tbody id="matchesTbody"></tbody>
       </table>
     </div>
+  </div>
+
+  <!-- Timeline stats -->
+  <div class="sec">
+    <div class="sec-hdr">
+      <span class="sec-title">📅 Thống kê hệ thống</span>
+      <div style="margin-left:auto;display:flex;gap:6px">
+        <button class="btn-sm" id="btnStatsDay" onclick="setStatsPeriod('day')">Hôm nay</button>
+        <button class="btn-sm" id="btnStatsMonth" onclick="setStatsPeriod('month')">Tháng này</button>
+        <button class="btn-sm" id="btnStatsYear" onclick="setStatsPeriod('year')">Năm nay</button>
+      </div>
+    </div>
+    <div id="statsTimeline" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px"></div>
   </div>
 
   <!-- System logs -->
@@ -280,6 +311,15 @@ tr:hover td{background:rgba(255,255,255,.025)}
 
 </div>
 
+<div id="lockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.97);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:14px">
+  <div style="font-size:52px">🔒</div>
+  <div style="color:#c9d1d9;font-size:18px;font-weight:700">Phiên đã bị khóa</div>
+  <div style="color:#8b949e;font-size:13px">Nhập mật khẩu để tiếp tục</div>
+  <input id="lockPin" type="password" placeholder="Mật khẩu..." maxlength="64" style="padding:12px 20px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:16px;text-align:center;width:280px;outline:none" onkeydown="if(event.key==='Enter')lockVerify()">
+  <div id="lockErr" style="color:#f85149;font-size:13px;min-height:18px"></div>
+  <button onclick="lockVerify()" style="padding:10px 28px;background:#58a6ff;border:none;border-radius:6px;color:#0d1117;font-size:14px;font-weight:700;cursor:pointer">Mở khóa</button>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -287,8 +327,22 @@ tr:hover td{background:rgba(255,255,255,.025)}
 let allMatches = [];
 let searchQ = '';
 let statusF = '';
+let sortMode = '';
 let localLogs = [];
 let currentUser = '';
+let statsPeriod = 'day';
+
+// ------------------------------------------------------------------ pin system
+const PINNED_KEY = 'fbc_pinned';
+function getPinned() { try { return new Set(JSON.parse(localStorage.getItem(PINNED_KEY)||'[]')); } catch(_){ return new Set(); } }
+function savePinned(s) { localStorage.setItem(PINNED_KEY, JSON.stringify([...s])); }
+function togglePin(id, ev) {
+  ev && ev.stopPropagation();
+  const p = getPinned();
+  if (p.has(id)) p.delete(id); else p.add(id);
+  savePinned(p);
+  renderLive(); renderTable();
+}
 
 // ------------------------------------------------------------------ utils
 function fmt(utcStr) {
@@ -396,12 +450,17 @@ async function pollMatches() {
 
 // ------------------------------------------------------------------ render live cards
 function renderLive() {
-  const live = allMatches.filter(m => isLive(m.status));
+  const pinned = getPinned();
+  let live = allMatches.filter(m => isLive(m.status));
   document.getElementById('liveCount').textContent = live.length;
   const el = document.getElementById('liveGrid');
   if (!live.length) {
     el.innerHTML = '<p class="empty">Không có trận nào đang diễn ra</p>';
     return;
+  }
+  // Sort pinned to top
+  if (sortMode === 'pinned') {
+    live = [...live].sort((a, b) => (pinned.has(b.id)?1:0) - (pinned.has(a.id)?1:0));
   }
   el.innerHTML = live.map(m => {
     const cls = m.status === 'HT' ? 'ht' : 'live';
@@ -410,19 +469,28 @@ function renderLive() {
     const hc  = m.home_handicap ? '<div class="chip">HC <b>' + m.home_handicap + '</b> ' + (m.home_handicap_odds||'?') + ' / <b>' + m.away_handicap + '</b> ' + (m.away_handicap_odds||'?') + '</div>' : '';
     const x2  = m.odds_1 ? '<div class="chip">1X2 <b>' + m.odds_1 + '</b> ' + (m.odds_x||'?') + ' <b>' + m.odds_2 + '</b></div>' : '';
     const href = '/match/' + encodeURIComponent(m.id);
-    return '<a href="' + href + '" class="mcard ' + cls + '" style="text-decoration:none;color:inherit;display:block">' +
+    const aHref = '/analyzer?match_id=' + encodeURIComponent(m.id);
+    const isPinned = pinned.has(m.id);
+    const pinBtn = '<button onclick="togglePin(' + JSON.stringify(m.id) + ',event)" style="position:absolute;top:8px;right:8px;background:none;border:none;cursor:pointer;font-size:14px;opacity:' + (isPinned?'1':'.35') + ';padding:2px">' + (isPinned?'⭐':'☆') + '</button>';
+    return '<div class="mcard ' + cls + '" style="position:relative">' +
+      pinBtn +
+      '<a href="' + href + '" style="text-decoration:none;color:inherit;display:block">' +
       '<div class="mcomp">' + m.competition + '</div>' +
       '<div class="mteams"><div class="mteam">' + m.home + '</div>' +
       '<div class="mscore">' + m.home_score + ' - ' + m.away_score + '</div>' +
       '<div class="mteam away">' + m.away + '</div></div>' +
       '<div class="minfo"><span>' + fmt(m.start_time_utc) + '</span><span class="mmin">' + min + '</span></div>' +
       '<div class="modds">' + ou + hc + x2 + '</div>' +
-      '</a>';
+      '</a>' +
+      '<a href="' + aHref + '" style="display:block;text-align:center;padding:5px;font-size:11px;font-weight:700;color:var(--primary);border-top:1px solid var(--border);text-decoration:none;background:rgba(88,166,255,.05)">🔍 Phân tích</a>' +
+      '</div>';
   }).join('');
 }
 
 // ------------------------------------------------------------------ render table
+const MAJOR_LEAGUES = ["Premier","Liga","Bundesliga","Serie","Ligue","Champions","Europa","V.League","MLS","Eredivisie","Primeira"];
 function renderTable() {
+  const pinned = getPinned();
   let rows = allMatches;
   if (statusF) rows = rows.filter(m => m.status === statusF);
   if (searchQ) {
@@ -433,10 +501,24 @@ function renderTable() {
       m.competition.toLowerCase().includes(q)
     );
   }
+  // Sort / filter by sortMode
+  if (sortMode === 'recent_goal') {
+    rows = [...rows].sort((a,b) => ((b.home_score+b.away_score)-(a.home_score+a.away_score)) || (isLive(a.status)?-1:isLive(b.status)?1:0));
+  } else if (sortMode === 'high_goals') {
+    rows = rows.filter(m => (m.home_score||0)+(m.away_score||0) > 3);
+  } else if (sortMode === 'major') {
+    rows = rows.filter(m => MAJOR_LEAGUES.some(l => (m.competition||'').includes(l)));
+  } else if (sortMode === 'pinned') {
+    rows = [...rows].sort((a,b) => (pinned.has(b.id)?1:0) - (pinned.has(a.id)?1:0));
+  }
+  // Always bubble pinned to top regardless of sort mode
+  if (sortMode !== 'pinned') {
+    rows = [...rows.filter(m => pinned.has(m.id)), ...rows.filter(m => !pinned.has(m.id))];
+  }
   document.getElementById('matchCount').textContent = rows.length;
   const tbody = document.getElementById('matchesTbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty">Không có kết quả</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="empty">Không có kết quả</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map(m => {
@@ -445,7 +527,10 @@ function renderTable() {
     const hc  = m.home_handicap ? m.home_handicap + '/' + (m.home_handicap_odds||'?') : '—';
     const x2  = m.odds_1 ? m.odds_1 + '/' + (m.odds_x||'?') + '/' + m.odds_2 : '—';
     const href = '/match/' + encodeURIComponent(m.id);
+    const isPinned = pinned.has(m.id);
+    const pinTd = '<td style="padding:0;text-align:center"><button onclick="togglePin(' + JSON.stringify(m.id) + ',event)" style="background:none;border:none;cursor:pointer;font-size:13px;opacity:' + (isPinned?'1':'.3') + ';padding:4px">' + (isPinned?'⭐':'☆') + '</button></td>';
     return '<tr style="cursor:pointer" onclick="location.href=\\'' + href + '\\'">' +
+      pinTd +
       '<td title="' + m.competition + '">' + m.competition.substring(0,30) + '</td>' +
       '<td><b>' + m.home + '</b></td>' +
       '<td><b>' + m.away + '</b></td>' +
@@ -456,6 +541,7 @@ function renderTable() {
       '<td style="color:var(--muted)">' + hc + '</td>' +
       '<td style="color:var(--muted)">' + x2 + '</td>' +
       '<td style="color:var(--muted)">' + fmt(m.start_time_utc) + '</td>' +
+      '<td><a href="/analyzer?match_id=' + encodeURIComponent(m.id) + '" style="color:var(--primary);font-size:11px;font-weight:700;text-decoration:none">🔍</a></td>' +
       '</tr>';
   }).join('');
 }
@@ -489,6 +575,22 @@ async function ctrlForce() {
   if (r) { showToast('Đang fetch dữ liệu ngay…'); setTimeout(pollMatches, 2000); }
 }
 
+// ------------------------------------------------------------------ timeline stats
+function setStatsPeriod(p) { statsPeriod = p; pollTimeline(); }
+async function pollTimeline() {
+  const data = await apiFetch('/api/stats/timeline?period=' + statsPeriod);
+  if (!data) return;
+  const el = document.getElementById('statsTimeline');
+  if (!el) return;
+  el.innerHTML = [
+    {n: data.matches, l:'Trận đấu', c:'c-all'},
+    {n: data.goals, l:'Bàn thắng', c:'c-live'},
+    {n: data.live, l:'Đang live', c:'c-live'},
+    {n: data.finished, l:'Kết thúc', c:'c-ft'},
+    {n: data.competitions, l:'Giải đấu', c:'c-ht'},
+  ].map(s=>'<div class="stat"><div class="stat-n '+s.c+'">'+(s.n!=null?s.n:'—')+'</div><div class="stat-l">'+s.l+'</div></div>').join('');
+}
+
 // ------------------------------------------------------------------ filters
 document.getElementById('searchInput').addEventListener('input', e => {
   searchQ = e.target.value; renderTable();
@@ -496,13 +598,19 @@ document.getElementById('searchInput').addEventListener('input', e => {
 document.getElementById('statusFilter').addEventListener('change', e => {
   statusF = e.target.value; renderTable();
 });
+document.getElementById('sortSelect').addEventListener('change', e => {
+  sortMode = e.target.value; renderTable(); renderLive();
+});
 
 // ------------------------------------------------------------------ init
 pollStatus();
 pollMatches();
+pollTimeline();
 setInterval(pollStatus,  5000);
 setInterval(pollMatches, 12000);
+setInterval(pollTimeline, 30000);
 </script>
+<script src="/static/lock.js"></script>
 </body>
 </html>"""
 
@@ -592,6 +700,7 @@ tr:hover td{background:rgba(255,255,255,.025)}
 <header class="hdr">
   <a class="hdr-back" href="/">&larr; Quay lại</a>
   <div class="hdr-title" id="hdrTitle">Đang tải…</div>
+  <a class="btn-sm" id="analyzeBtn" href="#" style="text-decoration:none">🔍 Phân tích</a>
   <form method="post" action="/logout" style="margin:0">
     <button class="btn-sm danger" type="submit">Đăng xuất</button>
   </form>
@@ -759,6 +868,7 @@ async function load(){
     apiFetch('/api/matches/'+encodeURIComponent(matchId)+'/events'),
   ]);
   if(!m||m.__notfound){renderNotFound();return;}
+  document.getElementById('analyzeBtn').href = '/analyzer?match_id=' + encodeURIComponent(matchId);
   document.getElementById('main').innerHTML =
     renderSnapshot(m) +
     renderOddsHistory(odds||[]) +
@@ -768,6 +878,386 @@ async function load(){
 load();
 setInterval(load, 12000);
 </script>
+<div id="lockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.97);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:14px">
+  <div style="font-size:52px">🔒</div>
+  <div style="color:#c9d1d9;font-size:18px;font-weight:700">Phiên đã bị khóa</div>
+  <div style="color:#8b949e;font-size:13px">Nhập mật khẩu để tiếp tục</div>
+  <input id="lockPin" type="password" placeholder="Mật khẩu..." maxlength="64" style="padding:12px 20px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:16px;text-align:center;width:280px;outline:none" onkeydown="if(event.key==='Enter')lockVerify()">
+  <div id="lockErr" style="color:#f85149;font-size:13px;min-height:18px"></div>
+  <button onclick="lockVerify()" style="padding:10px 28px;background:#58a6ff;border:none;border-radius:6px;color:#0d1117;font-size:14px;font-weight:700;cursor:pointer">Mở khóa</button>
+</div>
+<script src="/static/lock.js"></script>
+</body>
+</html>"""
+
+
+_MARKET_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CryptoWatch — Live Markets</title>
+<style>
+:root{--bg:#0a0e1a;--card:#0f1629;--border:#1e2a42;--primary:#00c2ff;--green:#00e676;--red:#ff4444;--text:#e2e8f0;--muted:#64748b;--r:8px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.nav{background:var(--card);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:24px}
+.nav-brand{font-size:18px;font-weight:800;color:var(--primary);letter-spacing:-0.5px}
+.nav-links{display:flex;gap:20px}
+.nav-links a{color:var(--muted);text-decoration:none;font-size:14px;transition:color .15s}
+.nav-links a:hover{color:var(--text)}
+.nav-links a.active{color:var(--primary);font-weight:600}
+.nav-spacer{flex:1}
+.nav-price{font-size:12px;color:var(--muted)}
+.main{padding:28px;max-width:1300px;margin:0 auto}
+h2{font-size:20px;font-weight:700;margin-bottom:18px;color:var(--text)}
+.hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:28px}
+.hero-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:18px}
+.hc-sym{font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.5px;margin-bottom:4px}
+.hc-price{font-size:24px;font-weight:800;margin-bottom:6px}
+.hc-chg{font-size:13px;font-weight:600}
+.up{color:var(--green)}.dn{color:var(--red)}
+.tbl-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{padding:12px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--muted);border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.5px}
+td{padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.04);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(0,194,255,.03)}
+.sym{font-weight:700;color:var(--text)}
+.bar{display:inline-block;width:80px;height:4px;background:#1e2a42;border-radius:2px;overflow:hidden;vertical-align:middle;margin-left:8px}
+.bar-fill{height:100%;background:var(--green);border-radius:2px;transition:width .5s}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <div class="nav-brand">&#x2B21; CryptoWatch</div>
+  <div class="nav-links">
+    <a href="#" class="active">Markets</a>
+    <a href="#">Portfolio</a>
+    <a href="#">Watchlist</a>
+    <a href="#">News</a>
+  </div>
+  <div class="nav-spacer"></div>
+  <div class="nav-price" id="btcNav">BTC $&#x2014;</div>
+</nav>
+<div class="main">
+  <div class="hero" id="hero"></div>
+  <h2>All Markets</h2>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Name</th><th>Price</th><th>24h %</th><th>Market Cap</th><th>Volume 24h</th><th>7d Range</th></tr></thead>
+      <tbody id="tbl"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+const BASE = {BTC:67432.18,ETH:3521.44,BNB:587.22,SOL:178.95,XRP:0.6234,ADA:0.4821,DOT:7.34,AVAX:36.72,MATIC:0.8821,LINK:14.92,LTC:82.44,UNI:8.73,ATOM:9.11,ALGO:0.1893};
+const state = {};
+for(const [k,v] of Object.entries(BASE)) state[k]={p:v,p0:v,chg:0};
+const CAPS = {BTC:1320000,ETH:423000,BNB:88000,SOL:79000,XRP:34000,ADA:17000,DOT:10000,AVAX:15000,MATIC:8000,LINK:8500,LTC:6100,UNI:5200,ATOM:3300,ALGO:1500};
+function rng(min,max){return min+(Math.random()*(max-min));}
+function tick(){
+  for(const k of Object.keys(state)){
+    const s=state[k]; const d=(Math.random()-.5)*s.p0*0.0012; s.p=Math.max(s.p0*.7,s.p+d);
+    s.chg=((s.p-s.p0)/s.p0*100);
+  }
+  render();
+}
+function fmt(n,d=2){return n>=1e9?(n/1e9).toFixed(2)+'B':n>=1e6?(n/1e6).toFixed(2)+'M':n.toFixed(d);}
+function render(){
+  const keys=Object.keys(state);
+  document.getElementById('hero').innerHTML=keys.slice(0,4).map(k=>{
+    const s=state[k]; const up=s.chg>=0;
+    return '<div class="hero-card"><div class="hc-sym">'+k+'/USDT</div>'+
+      '<div class="hc-price">$'+fmt(s.p,s.p<1?4:2)+'</div>'+
+      '<div class="hc-chg '+(up?'up':'dn')+'">'+(up?'&#x25B2;':'&#x25BC;')+' '+Math.abs(s.chg).toFixed(2)+'%</div></div>';
+  }).join('');
+  document.getElementById('btcNav').textContent='BTC $'+fmt(state.BTC.p,0);
+  let r=''; keys.forEach((k,i)=>{
+    const s=state[k]; const up=s.chg>=0; const vol=CAPS[k]*(rng(.08,.14));
+    const hi=s.p0*rng(1.005,1.025); const lo=s.p0*rng(.975,.995);
+    const pct=(s.p-lo)/(hi-lo)*100;
+    r+='<tr><td style="color:var(--muted)">'+(i+1)+'</td>'+
+      '<td class="sym">'+k+'<span style="color:var(--muted);font-weight:400;margin-left:6px">'+k+'USDT</span></td>'+
+      '<td>$'+fmt(s.p,s.p<1?4:2)+'</td>'+
+      '<td class="'+(up?'up':'dn')+'">'+(up?'+':'')+s.chg.toFixed(2)+'%</td>'+
+      '<td>$'+fmt(CAPS[k]*1e6)+'</td>'+
+      '<td>$'+fmt(vol*1e6)+'</td>'+
+      '<td><span style="color:var(--muted);font-size:11px">$'+fmt(s.p0*.975,s.p<1?4:2)+'</span>'+
+      '<div class="bar"><div class="bar-fill" style="width:'+pct.toFixed(0)+'%"></div></div>'+
+      '<span style="color:var(--muted);font-size:11px">$'+fmt(s.p0*1.025,s.p<1?4:2)+'</span></td></tr>';
+  });
+  document.getElementById('tbl').innerHTML=r;
+}
+render();
+setInterval(tick,2200);
+</script>
+</body>
+</html>"""
+
+_DATA_HTML = """<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Data Browser &#x2014; Football Dashboard</title>
+<style>
+:root{--bg:#0d1117;--surface:#161b22;--card:#21262d;--border:#30363d;--primary:#58a6ff;--pdim:#1f3a5f;--red:#f85149;--green:#3fb950;--orange:#d29922;--purple:#bc8cff;--text:#c9d1d9;--muted:#8b949e;--r:6px;--font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:50}
+.hdr-logo{font-size:16px;font-weight:700;color:var(--primary)}
+.hdr a{color:var(--muted);text-decoration:none;font-size:13px}
+.hdr a:hover{color:var(--primary)}
+.hdr-spacer{flex:1}
+.btn-sm{padding:5px 12px;border-radius:var(--r);border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-size:12px;transition:all .15s;text-decoration:none;display:inline-block}
+.btn-sm:hover{border-color:var(--primary);color:var(--primary)}
+.main{flex:1;display:flex;gap:0}
+.sidebar{width:340px;min-width:280px;border-right:1px solid var(--border);display:flex;flex-direction:column;height:calc(100vh - 45px);position:sticky;top:45px;overflow:hidden}
+.search-panel{padding:12px;border-bottom:1px solid var(--border)}
+.sinput{width:100%;padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:12px;margin-bottom:6px}
+.sinput:focus{outline:none;border-color:var(--primary)}
+.sflex{display:flex;gap:6px}
+.slist{flex:1;overflow-y:auto}
+.smatch{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s;font-size:12px}
+.smatch:hover{background:rgba(88,166,255,.05)}
+.smatch.sel{background:var(--pdim);border-left:3px solid var(--primary)}
+.smatch.cmp{background:rgba(63,185,80,.08);border-left:3px solid var(--green)}
+.smatch-teams{font-weight:700;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.smatch-meta{color:var(--muted);font-size:11px;display:flex;gap:8px}
+.smatch-score{color:var(--red);font-weight:700}
+.smatch-empty{color:var(--muted);text-align:center;padding:24px;font-size:12px}
+.content{flex:1;overflow-y:auto;padding:16px;height:calc(100vh - 45px)}
+.badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700}
+.b-live{background:rgba(248,81,73,.2);color:var(--red);border:1px solid rgba(248,81,73,.35)}
+.b-ft{background:rgba(63,185,80,.2);color:var(--green);border:1px solid rgba(63,185,80,.35)}
+.b-ht{background:rgba(188,140,255,.2);color:var(--purple);border:1px solid rgba(188,140,255,.35)}
+.b-up{background:rgba(210,153,34,.2);color:var(--orange);border:1px solid rgba(210,153,34,.35)}
+.b-x{background:rgba(139,148,158,.15);color:var(--muted);border:1px solid var(--border)}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:14px}
+.panel-h{padding:8px 12px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--primary);display:flex;align-items:center;gap:8px}
+.panel-b{padding:0;overflow-x:auto}
+table.ot{width:100%;border-collapse:collapse;font-size:11px;min-width:500px}
+table.ot th{padding:7px 8px;background:var(--surface);color:var(--muted);font-weight:600;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;white-space:nowrap;text-align:center}
+table.ot td{padding:6px 8px;border-bottom:1px solid #1a1f26;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
+table.ot tr:last-child td{border-bottom:none}
+table.ot tr:hover td{background:rgba(255,255,255,.02)}
+.diff-up{color:var(--green)}.diff-down{color:var(--red)}
+.actions-bar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
+.btn{padding:6px 14px;border-radius:var(--r);border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:12px;font-weight:600;transition:all .15s}
+.btn:hover{border-color:var(--primary);color:var(--primary)}
+.btn-green{border-color:var(--green);color:var(--green);background:rgba(63,185,80,.1)}
+.btn-green:hover{background:var(--green);color:#000}
+.empty{color:var(--muted);text-align:center;padding:48px;font-size:13px}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 16px;font-size:12px;display:none;z-index:200}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="hdr-logo">&#x1F4E6; Data Browser</div>
+  <a href="/">&larr; Dashboard</a>
+  <a href="/analyzer">&#x1F50D; Analyzer</a>
+  <div class="hdr-spacer"></div>
+  <button class="btn-sm" onclick="goDisguise()">&#x1F504; &#x110;&#x1ED5;i</button>
+  <form method="post" action="/logout" style="display:inline;margin:0">
+    <button type="submit" class="btn-sm" style="border-color:var(--red);color:var(--red)">&#x110;&#x103;ng xu&#x1EA5;t</button>
+  </form>
+</div>
+<div class="main">
+  <div class="sidebar">
+    <div class="search-panel">
+      <input class="sinput" id="sqText" type="search" placeholder="T&#xEC;m &#x111;&#x1ED9;i, gi&#x1EA3;i &#x111;&#x1EA5;u...">
+      <div class="sflex">
+        <input class="sinput" id="sqFrom" type="date" style="flex:1" title="T&#x1EEB; ng&#xE0;y">
+        <input class="sinput" id="sqTo" type="date" style="flex:1" title="&#x110;&#x1EBF;n ng&#xE0;y">
+      </div>
+      <div class="sflex">
+        <select class="sinput" id="sqStatus" style="flex:1">
+          <option value="">M&#x1ECD;i tr&#x1EA1;ng th&#xE1;i</option>
+          <option value="H1">H1</option>
+          <option value="H2">H2</option>
+          <option value="HT">HT</option>
+          <option value="FT">FT</option>
+          <option value="UPCOMING">UPCOMING</option>
+        </select>
+        <button class="btn-sm" onclick="doSearch()" style="flex:0 0 auto">&#x1F50D; T&#xEC;m</button>
+      </div>
+    </div>
+    <div class="slist" id="slist"><div class="smatch-empty">Nh&#x1EAD;p t&#x1EEB; kh&#xF3;a &#x111;&#x1EC3; t&#xEC;m ki&#x1EBF;m</div></div>
+  </div>
+  <div class="content">
+    <div id="contentArea"><div class="empty">&larr; Ch&#x1ECD;n m&#x1ED9;t tr&#x1EAD;n &#x111;&#x1EA5;u &#x111;&#x1EC3; xem chi ti&#x1EBF;t</div></div>
+  </div>
+</div>
+<div id="lockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.97);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:14px">
+  <div style="font-size:52px">&#x1F512;</div>
+  <div style="color:#c9d1d9;font-size:18px;font-weight:700">Phi&#xEA;n &#x111;&#xE3; b&#x1ECB; kh&#xF3;a</div>
+  <div style="color:#8b949e;font-size:13px">Nh&#x1EAD;p m&#x1EAD;t kh&#x1EA9;u &#x111;&#x1EC3; ti&#x1EBF;p t&#x1EE5;c</div>
+  <input id="lockPin" type="password" placeholder="M&#x1EAD;t kh&#x1EA9;u..." maxlength="64" style="padding:12px 20px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:16px;text-align:center;width:280px;outline:none" onkeydown="if(event.key==='Enter')lockVerify()">
+  <div id="lockErr" style="color:#f85149;font-size:13px;min-height:18px"></div>
+  <button onclick="lockVerify()" style="padding:10px 28px;background:#58a6ff;border:none;border-radius:6px;color:#0d1117;font-size:14px;font-weight:700;cursor:pointer">M&#x1EDF; kh&#xF3;a</button>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+let selectedA = null, selectedB = null;
+const matches_cache = {};
+
+function escHtml(s){if(s==null)return '';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmt(utcStr){if(!utcStr)return '—';return new Date(utcStr).toLocaleString('vi-VN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'Asia/Ho_Chi_Minh'});}
+function fmtTime(utcStr){if(!utcStr)return '—';return new Date(utcStr).toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'Asia/Ho_Chi_Minh'});}
+function badge(s){const live=['LIVE','H1','H2'];if(live.includes(s))return '<span class="badge b-live">'+s+'</span>';if(s==='HT')return '<span class="badge b-ht">HT</span>';if(s==='FT')return '<span class="badge b-ft">FT</span>';if(s==='UPCOMING')return '<span class="badge b-up">UP</span>';return '<span class="badge b-x">'+escHtml(s)+'</span>';}
+function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2800);}
+async function apiFetch(url){try{const r=await fetch(url);if(r.status===401){location.href='/login';return null;}return r.ok?r.json():null;}catch(e){showToast('L\\u1ed7i: '+e.message);return null;}}
+
+async function doSearch() {
+  const q = document.getElementById('sqText').value;
+  const from_ = document.getElementById('sqFrom').value;
+  const to_ = document.getElementById('sqTo').value;
+  const st = document.getElementById('sqStatus').value;
+  const params = new URLSearchParams({q, date_from:from_, date_to:to_, status:st, limit:300});
+  const data = await apiFetch('/api/data/matches?' + params.toString());
+  const sl = document.getElementById('slist');
+  if (!data || !data.length) {
+    sl.innerHTML = '<div class="smatch-empty">Kh\\u00f4ng t\\u00ecm th\\u1ea5y tr\\u1eadn n\\u00e0o</div>'; return;
+  }
+  sl.innerHTML = data.map(m => {
+    const clsA = selectedA && selectedA.id===m.id ? ' sel' : '';
+    const clsB = selectedB && selectedB.id===m.id ? ' cmp' : '';
+    return '<div class="smatch'+clsA+clsB+'" onclick="selectMatch(\\'' + escHtml(m.id) + '\\')" data-id="'+escHtml(m.id)+'">' +
+      '<div class="smatch-teams">'+escHtml(m.home)+' <span class="smatch-score">'+m.home_score+'-'+m.away_score+'</span> '+escHtml(m.away)+'</div>' +
+      '<div class="smatch-meta"><span>'+badge(m.status)+'</span><span>'+escHtml((m.competition||'').substring(0,25))+'</span><span>'+fmt(m.start_time_utc)+'</span></div>' +
+      '</div>';
+  }).join('');
+  data.forEach(m => matches_cache[m.id] = m);
+}
+
+document.getElementById('sqText').addEventListener('keydown', e => { if(e.key==='Enter') doSearch(); });
+
+async function selectMatch(id) {
+  const m = matches_cache[id];
+  if (!m) return;
+  selectedA = m;
+  updateSidebarSel();
+  await renderDetail(id, 'A');
+}
+
+async function setCompare(id) {
+  const m = matches_cache[id];
+  if (!m) return;
+  if (selectedB && selectedB.id === id) { selectedB = null; updateSidebarSel(); renderDetail(selectedA.id, 'A'); return; }
+  selectedB = m;
+  updateSidebarSel();
+  if (selectedA) await renderSplit();
+}
+
+function updateSidebarSel() {
+  document.querySelectorAll('.smatch').forEach(el => {
+    el.classList.remove('sel','cmp');
+    const id = el.dataset.id;
+    if (selectedA && id===selectedA.id) el.classList.add('sel');
+    if (selectedB && id===selectedB.id) el.classList.add('cmp');
+  });
+}
+
+async function renderDetail(id, which) {
+  const oddsData = await apiFetch('/api/matches/'+encodeURIComponent(id)+'/odds-history');
+  const m = matches_cache[id];
+  const analyzeHref = '/analyzer?match_id='+encodeURIComponent(id);
+  const csvHref = '/api/data/matches/'+encodeURIComponent(id)+'/csv';
+  let html = '<div class="actions-bar">' +
+    '<b style="font-size:14px;font-weight:700">'+escHtml(m.home)+' vs '+escHtml(m.away)+'</b>' +
+    badge(m.status) +
+    '<span style="color:var(--muted);font-size:12px">'+escHtml(m.competition||'')+'</span>' +
+    '<a href="'+analyzeHref+'" class="btn btn-green" target="_blank">&#x1F50D; Ph\\u00e2n t\\u00edch</a>' +
+    '<a href="'+csvHref+'" class="btn" download>&#x2B07; CSV</a>' +
+    (selectedB && which==='A' ? '' : '<button class="btn" onclick="selectCompare()">&#x2696; So s\\u00e1nh</button>') +
+    '</div>';
+  html += renderOddsTable(oddsData||[], m.home, m.away);
+  document.getElementById('contentArea').innerHTML = html;
+}
+
+window.selectCompare = async function() {
+  if (!selectedA) return;
+  document.getElementById('contentArea').innerHTML = '<div class="empty">&larr; Click tr\\u1eadn th\\u1ee9 hai trong danh s\\u00e1ch \\u0111\\u1ec3 so s\\u00e1nh</div>';
+  document.querySelectorAll('.smatch').forEach(el => {
+    if (!selectedA || el.dataset.id !== selectedA.id) {
+      el.onclick = function(){ setCompare(el.dataset.id); };
+    }
+  });
+};
+
+async function renderSplit() {
+  const [oddsA, oddsB] = await Promise.all([
+    apiFetch('/api/matches/'+encodeURIComponent(selectedA.id)+'/odds-history'),
+    apiFetch('/api/matches/'+encodeURIComponent(selectedB.id)+'/odds-history'),
+  ]);
+  const html = '<div class="split">' +
+    '<div>' +
+      '<div class="actions-bar"><b>'+escHtml(selectedA.home)+' vs '+escHtml(selectedA.away)+'</b>'+badge(selectedA.status)+'<a href="/api/data/matches/'+encodeURIComponent(selectedA.id)+'/csv" class="btn" download>&#x2B07; CSV</a></div>' +
+      renderOddsTable(oddsA||[], selectedA.home, selectedA.away) +
+    '</div>' +
+    '<div>' +
+      '<div class="actions-bar"><b>'+escHtml(selectedB.home)+' vs '+escHtml(selectedB.away)+'</b>'+badge(selectedB.status)+'<a href="/api/data/matches/'+encodeURIComponent(selectedB.id)+'/csv" class="btn" download>&#x2B07; CSV</a>' +
+      '<button class="btn" onclick="clearCompare()" style="margin-left:auto">&#x2715; B\\u1ecf so s\\u00e1nh</button></div>' +
+      renderOddsTable(oddsB||[], selectedB.home, selectedB.away) +
+    '</div></div>';
+  document.getElementById('contentArea').innerHTML = html;
+}
+
+window.clearCompare = function() { selectedB=null; updateSidebarSel(); if(selectedA) renderDetail(selectedA.id,'A'); };
+
+function fmtCell(v){return v==null?'\\u2014':v;}
+function diffCls(curr,prev,f){if(curr==null||prev==null)return '';const c=parseFloat(curr),p=parseFloat(prev[f]);if(isNaN(c)||isNaN(p)||c===p)return '';return c>p?' diff-up':' diff-down';}
+
+function renderOddsTable(rows, home, away) {
+  if (!rows.length) return '<div class="panel"><div class="panel-h">&#x1F4CA; Bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o</div><div style="color:var(--muted);text-align:center;padding:24px;font-size:12px">Ch\\u01b0a c\\u00f3 d\\u1eef li\\u1ec7u</div></div>';
+  let h = '<div class="panel"><div class="panel-h">&#x1F4CA; Bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o <span style="font-size:11px;color:var(--muted);font-weight:400">('+rows.length+' snapshots)</span></div><div class="panel-b"><table class="ot"><thead><tr>' +
+    '<th>Th\\u1eddi gian</th><th>Score</th><th>Ph\\u00fat</th>' +
+    '<th>HC '+escHtml((home||'').split(' ')[0])+'</th><th>@</th>' +
+    '<th>HC '+escHtml((away||'').split(' ')[0])+'</th><th>@</th>' +
+    '<th>OU</th><th>Over</th><th>Under</th>' +
+    '<th>1</th><th>X</th><th>2</th>' +
+    '</tr></thead><tbody>';
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i], p=i>0?rows[i-1]:null;
+    const score=(r.home_score!=null?r.home_score:'?')+'-'+(r.away_score!=null?r.away_score:'?');
+    h+='<tr>'+
+      '<td style="color:var(--muted)">'+fmtTime(r.captured_at)+'</td>'+
+      '<td style="font-weight:700;color:var(--red)">'+score+'</td>'+
+      '<td style="color:var(--orange)">'+(r.minute?r.minute+"'":'\\u2014')+'</td>'+
+      '<td>'+escHtml(fmtCell(r.home_handicap))+'</td>'+
+      '<td class="'+(p?diffCls(r.home_handicap_odds,p,'home_handicap_odds'):'').trim()+'">'+fmtCell(r.home_handicap_odds)+'</td>'+
+      '<td>'+escHtml(fmtCell(r.away_handicap))+'</td>'+
+      '<td class="'+(p?diffCls(r.away_handicap_odds,p,'away_handicap_odds'):'').trim()+'">'+fmtCell(r.away_handicap_odds)+'</td>'+
+      '<td>'+escHtml(fmtCell(r.ou_line))+'</td>'+
+      '<td class="'+(p?diffCls(r.over_odds,p,'over_odds'):'').trim()+'">'+fmtCell(r.over_odds)+'</td>'+
+      '<td class="'+(p?diffCls(r.under_odds,p,'under_odds'):'').trim()+'">'+fmtCell(r.under_odds)+'</td>'+
+      '<td class="'+(p?diffCls(r.odds_1,p,'odds_1'):'').trim()+'">'+fmtCell(r.odds_1)+'</td>'+
+      '<td class="'+(p?diffCls(r.odds_x,p,'odds_x'):'').trim()+'">'+fmtCell(r.odds_x)+'</td>'+
+      '<td class="'+(p?diffCls(r.odds_2,p,'odds_2'):'').trim()+'">'+fmtCell(r.odds_2)+'</td>'+
+      '</tr>';
+  }
+  h+='</tbody></table></div></div>';
+  return h;
+}
+
+(async function(){
+  document.getElementById('sqText').value='';
+  const data = await apiFetch('/api/data/matches?limit=200');
+  if (data && data.length) {
+    const sl = document.getElementById('slist');
+    sl.innerHTML = data.map(m => {
+      return '<div class="smatch" onclick="selectMatch(\\'' + escHtml(m.id) + '\\')" data-id="'+escHtml(m.id)+'">' +
+        '<div class="smatch-teams">'+escHtml(m.home)+' <span class="smatch-score">'+m.home_score+'-'+m.away_score+'</span> '+escHtml(m.away)+'</div>' +
+        '<div class="smatch-meta"><span>'+badge(m.status)+'</span><span>'+escHtml((m.competition||'').substring(0,25))+'</span><span>'+fmt(m.start_time_utc)+'</span></div>' +
+        '</div>';
+    }).join('');
+    data.forEach(m => matches_cache[m.id] = m);
+  }
+})();
+</script>
+<script src="/static/lock.js"></script>
 </body>
 </html>"""
 
@@ -787,6 +1277,14 @@ async def lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="Football Dashboard", lifespan=lifespan)
+
+# ---- Static files (analyzer.js etc.) --------------------------------------
+_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+if os.path.isdir(_STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+# ---- Analyzer page + API --------------------------------------------------
+app.include_router(analyzer_router)
 
 
 # ---- Security headers on every response -----------------------------------
@@ -942,3 +1440,57 @@ async def api_resume(user: str = Depends(require_auth)):
 async def api_force(user: str = Depends(require_auth)):
     send_collector_command("force")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# New pages and API routes
+# ---------------------------------------------------------------------------
+
+@app.get("/market", response_class=HTMLResponse)
+async def market_page():
+    return HTMLResponse(_MARKET_HTML)
+
+
+@app.get("/data", response_class=HTMLResponse)
+async def data_browser_page(user: str = Depends(require_auth)):
+    return HTMLResponse(_DATA_HTML)
+
+
+@app.post("/api/lock-verify")
+async def api_lock_verify(payload: dict = Body(...), user: str = Depends(require_auth)):
+    from .auth import verify_credentials
+    password = payload.get("password", "")
+    if verify_credentials(user, password):
+        return {"ok": True}
+    return JSONResponse({"ok": False}, status_code=401)
+
+
+@app.get("/api/stats/timeline")
+async def api_stats_timeline(period: str = "day", user: str = Depends(require_auth)):
+    from .database import get_timeline_stats
+    return JSONResponse(get_timeline_stats(period))
+
+
+@app.get("/api/data/matches")
+async def api_data_matches(q: str = "", date_from: str = "", date_to: str = "", status: str = "", limit: int = 300, user: str = Depends(require_auth)):
+    return JSONResponse(search_matches(q=q, date_from=date_from, date_to=date_to, status=status, limit=limit))
+
+
+@app.get("/api/data/matches/{match_id:path}/csv")
+async def api_data_csv(match_id: str, user: str = Depends(require_auth)):
+    from .database import get_odds_history_for_analyzer
+    from .analyzer.views import _db_rows_to_csv_rows, _rows_to_csv_text
+    import re
+    m = get_match_by_id(match_id)
+    if not m:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db_rows = get_odds_history_for_analyzer(match_id)
+    rows = _db_rows_to_csv_rows(db_rows)
+    text = _rows_to_csv_text(rows)
+    safe = re.sub(r'[^\w\s-]', '', f"{m.get('home','')} vs {m.get('away','')}")
+    fname = quote(safe.replace(' ', '_') + ".csv", safe="")
+    return Response(
+        content=text.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"}
+    )

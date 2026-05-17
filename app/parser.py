@@ -81,13 +81,13 @@ def _get_status(match_json: Dict) -> str:
     CODE_MAP = {
         0: "UPCOMING",
         1: "UPCOMING",
-        2: "LIVE",   # H1
+        2: "H1",     # live, first half
         3: "HT",
         4: "HT",
-        5: "LIVE",   # H2
-        6: "LIVE",   # Extra time
-        7: "LIVE",   # Penalties
-        8: "LIVE",   # Another live variant
+        5: "H2",     # live, second half
+        6: "H2",     # extra time (treat as second half for analyzer)
+        7: "H2",     # penalties
+        8: "H2",     # another live variant
         9: "FT",
     }
     if status_code in CODE_MAP:

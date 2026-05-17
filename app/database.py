@@ -203,10 +203,27 @@ def init_db() -> None:
                         under_odds          REAL,
                         odds_1              REAL,
                         odds_x              REAL,
-                        odds_2              REAL
+                        odds_2              REAL,
+                        minute              INTEGER,
+                        home_score          INTEGER,
+                        away_score          INTEGER,
+                        status              TEXT
                     )
                 """)
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_odds_hist_match ON match_odds_history(match_id, captured_at DESC)")
+                # Migrate existing table: add columns if absent (safe no-op if already present)
+                for col, typedef in [
+                    ("minute",     "INTEGER"),
+                    ("home_score", "INTEGER"),
+                    ("away_score", "INTEGER"),
+                    ("status",     "TEXT"),
+                ]:
+                    cur.execute(f"""
+                        DO $$ BEGIN
+                            ALTER TABLE match_odds_history ADD COLUMN {col} {typedef};
+                        EXCEPTION WHEN duplicate_column THEN NULL;
+                        END $$
+                    """)
 
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS match_events (
@@ -230,6 +247,25 @@ def init_db() -> None:
                         updated_at TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
+
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS analyzer_sessions (
+                        id          BIGSERIAL PRIMARY KEY,
+                        owner       TEXT NOT NULL,
+                        filename    TEXT NOT NULL,
+                        meta        JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        csv_blob    TEXT NOT NULL,
+                        overrides   JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        notes       JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        note_text   TEXT NOT NULL DEFAULT '',
+                        pred_fh     INTEGER,
+                        pred_fa     INTEGER,
+                        analysis    JSONB,
+                        created_at  TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at  TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_analyzer_owner ON analyzer_sessions(owner, updated_at DESC)")
                 # Seed default state rows (DO NOTHING if already exist)
                 cur.execute("""
                     INSERT INTO collector_state (key, value) VALUES
@@ -306,8 +342,9 @@ def _record_odds_snapshot(cur, match: Match) -> None:
             home_handicap, home_handicap_odds,
             away_handicap, away_handicap_odds,
             ou_line, over_odds, under_odds,
-            odds_1, odds_x, odds_2
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            odds_1, odds_x, odds_2,
+            minute, home_score, away_score, status
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             match.id,
@@ -315,6 +352,7 @@ def _record_odds_snapshot(cur, match: Match) -> None:
             match.away_handicap, match.away_handicap_odds,
             match.ou_line, match.over_odds, match.under_odds,
             match.odds_1, match.odds_x, match.odds_2,
+            match.minute, match.home_score, match.away_score, match.status,
         ),
     )
 
@@ -398,6 +436,8 @@ def upsert_match(match: Match) -> None:
         )
 
         if prev is None:
+            # Record initial snapshot so from-match works immediately
+            _record_odds_snapshot(cur, match)
             return
 
         if _odds_changed(match, prev):
@@ -485,6 +525,27 @@ def get_odds_history(match_id: str, limit: int = 500) -> list[dict[str, Any]]:
         return [_iso(dict(r), "captured_at") for r in cur.fetchall()]
 
 
+def get_odds_history_for_analyzer(match_id: str, limit: int = 2000) -> list[dict[str, Any]]:
+    """Like get_odds_history but fetches ALL columns including minute/score/status,
+    ordered oldest-first, for use by the analyzer compute pipeline."""
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """
+            SELECT home_handicap, away_handicap,
+                   ou_line, over_odds, under_odds,
+                   odds_1, odds_x, odds_2,
+                   minute, home_score, away_score, status, captured_at
+            FROM match_odds_history
+            WHERE match_id = %s
+            ORDER BY captured_at ASC
+            LIMIT %s
+            """,
+            (match_id, limit),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
 def get_match_events(match_id: str, limit: int = 200) -> list[dict[str, Any]]:
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -494,3 +555,44 @@ def get_match_events(match_id: str, limit: int = 200) -> list[dict[str, Any]]:
             (match_id, limit),
         )
         return [_iso(dict(r), "occurred_at") for r in cur.fetchall()]
+
+
+def search_matches(q: str = "", date_from: str = "", date_to: str = "", status: str = "", limit: int = 300) -> list[dict]:
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        filters = []
+        params: list = []
+        if q:
+            filters.append("(home ILIKE %s OR away ILIKE %s OR competition ILIKE %s)")
+            p = f"%{q}%"
+            params += [p, p, p]
+        if date_from:
+            filters.append("start_time_utc >= %s")
+            params.append(date_from)
+        if date_to:
+            filters.append("start_time_utc <= %s")
+            params.append(date_to + "T23:59:59Z")
+        if status:
+            filters.append("status = %s")
+            params.append(status)
+        where = ("WHERE " + " AND ".join(filters)) if filters else ""
+        params.append(limit)
+        cur.execute(f"SELECT id,competition,home,away,start_time_utc,status,minute,home_score,away_score FROM matches {where} ORDER BY start_time_utc DESC LIMIT %s", params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+def get_timeline_stats(period: str = "day") -> dict:
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT
+                COUNT(*) AS matches,
+                COUNT(*) FILTER (WHERE status = ANY(%s)) AS live,
+                COUNT(*) FILTER (WHERE status = 'FT') AS finished,
+                COUNT(DISTINCT competition) AS competitions,
+                COALESCE(SUM(home_score + away_score), 0) AS goals
+            FROM matches
+            WHERE date_trunc(%s, start_time_utc::timestamptz) = date_trunc(%s, NOW())
+        """, (list(_LIVE_STATUSES), period, period))
+        row = cur.fetchone()
+        return dict(row) if row else {"matches": 0, "live": 0, "finished": 0, "competitions": 0, "goals": 0}

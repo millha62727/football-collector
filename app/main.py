@@ -1373,7 +1373,7 @@ async function doImport(files) {
   // Batch large uploads to avoid one giant request
   const BATCH = 50;
   const total = files.length;
-  let agg = { files:0, matches_created:0, matches_updated:0, rows_inserted:0, rows_skipped:0, excluded:0, errors:[] };
+  let agg = { files:0, matches_created:0, matches_updated:0, rows_inserted:0, rows_skipped:0, duplicates:0, excluded:0, errors:[], results:[] };
   for (let i = 0; i < total; i += BATCH) {
     const slice = Array.from(files).slice(i, i + BATCH);
     prog.textContent = 'Đang upload ' + Math.min(i + slice.length, total) + ' / ' + total + ' file...';
@@ -1383,33 +1383,63 @@ async function doImport(files) {
       const r = await fetch('/api/data/import-csv', { method: 'POST', body: fd });
       if (r.status === 401) { location.href = '/login'; return; }
       const j = await r.json();
-      agg.files += j.files;
-      agg.matches_created += j.matches_created;
-      agg.matches_updated += j.matches_updated;
-      agg.rows_inserted += j.rows_inserted;
-      agg.rows_skipped += j.rows_skipped;
-      agg.excluded += j.excluded;
+      agg.files += j.files || 0;
+      agg.matches_created += j.matches_created || 0;
+      agg.matches_updated += j.matches_updated || 0;
+      agg.rows_inserted += j.rows_inserted || 0;
+      agg.rows_skipped += j.rows_skipped || 0;
+      agg.duplicates += j.duplicates || 0;
+      agg.excluded += j.excluded || 0;
       if (j.errors) agg.errors = agg.errors.concat(j.errors);
+      if (j.results) agg.results = agg.results.concat(j.results);
     } catch (e) {
-      agg.errors.push({ filename:'(batch ' + (i/BATCH+1) + ')', reason: e.message });
+      const msg = e.message || String(e);
+      agg.errors.push({ filename:'(batch ' + (i/BATCH+1) + ')', reason: msg });
+      // Mark every file in the failed batch as error
+      for (const f of slice) agg.results.push({ filename: f.name, status: 'error', detail: msg });
     }
   }
   prog.textContent = '';
-  let h = '<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px">';
-  h += '<div><b style="color:var(--green)">✓</b> ' + agg.files + ' file đã xử lý</div>';
-  h += '<div style="color:var(--muted);font-size:11px;margin-top:4px">';
-  h += 'Tạo mới: <b style="color:var(--green)">' + agg.matches_created + '</b> · ';
-  h += 'Cập nhật: <b>' + agg.matches_updated + '</b> · ';
-  h += 'Rows thêm: <b style="color:var(--primary)">' + agg.rows_inserted + '</b> · ';
-  h += 'Bỏ qua: <b>' + agg.rows_skipped + '</b>';
-  if (agg.excluded) h += ' · Loại trừ: <b style="color:var(--orange)">' + agg.excluded + '</b>';
-  h += '</div>';
-  if (agg.errors.length) {
-    h += '<div style="margin-top:8px;font-size:11px"><b style="color:var(--red)">Lỗi (' + agg.errors.length + '):</b><ul style="margin:4px 0 0 16px;color:var(--red);max-height:140px;overflow-y:auto">';
-    for (const e of agg.errors.slice(0, 30)) h += '<li>' + escHtml(e.filename) + ': ' + escHtml(e.reason) + '</li>';
-    if (agg.errors.length > 30) h += '<li>... và ' + (agg.errors.length - 30) + ' lỗi khác</li>';
-    h += '</ul></div>';
+
+  // Group per-file results by status
+  const groups = { created:[], updated:[], duplicate:[], excluded:[], error:[] };
+  for (const r of agg.results) {
+    if (groups[r.status]) groups[r.status].push(r);
   }
+  const successCount = groups.created.length + groups.updated.length;
+
+  let h = '<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px">';
+  h += '<div style="font-size:13px;margin-bottom:6px"><b>Kết quả import ' + agg.files + ' file</b></div>';
+  h += '<div style="color:var(--muted);font-size:11px;margin-bottom:8px">';
+  h += '<b style="color:var(--green)">✓ ' + successCount + '</b> thành công · ';
+  h += '<b style="color:#888">↺ ' + groups.duplicate.length + '</b> duplicate (bỏ qua) · ';
+  if (groups.excluded.length) h += '<b style="color:var(--orange)">⊘ ' + groups.excluded.length + '</b> loại trừ · ';
+  h += '<b style="color:var(--red)">✗ ' + groups.error.length + '</b> lỗi';
+  h += '<br>Tạo mới: <b>' + agg.matches_created + '</b> · Cập nhật: <b>' + agg.matches_updated + '</b> · ';
+  h += 'Rows thêm: <b style="color:var(--primary)">' + agg.rows_inserted + '</b> · ';
+  h += 'Rows bỏ qua: <b>' + agg.rows_skipped + '</b>';
+  h += '</div>';
+
+  function renderGroup(title, color, list, limit) {
+    if (!list.length) return '';
+    limit = limit || 80;
+    let s = '<details ' + (list === groups.error ? 'open' : '') + ' style="margin-top:6px">';
+    s += '<summary style="cursor:pointer;font-size:11px;color:' + color + '"><b>' + title + ' (' + list.length + ')</b></summary>';
+    s += '<ul style="margin:4px 0 0 16px;font-size:11px;max-height:160px;overflow-y:auto;color:var(--text)">';
+    for (const e of list.slice(0, limit)) {
+      s += '<li><span style="color:var(--muted)">' + escHtml(e.filename) + '</span>';
+      if (e.detail) s += ' <span style="color:' + color + '">— ' + escHtml(e.detail) + '</span>';
+      s += '</li>';
+    }
+    if (list.length > limit) s += '<li style="color:var(--muted)">... và ' + (list.length - limit) + ' file khác</li>';
+    s += '</ul></details>';
+    return s;
+  }
+  h += renderGroup('✓ Thành công', 'var(--green)', groups.created.concat(groups.updated));
+  h += renderGroup('↺ Duplicate (đã tồn tại, bỏ qua)', '#888', groups.duplicate);
+  h += renderGroup('⊘ Loại trừ (e-sports/virtual)', 'var(--orange)', groups.excluded);
+  h += renderGroup('✗ Lỗi', 'var(--red)', groups.error);
+
   h += '</div>';
   res.innerHTML = h;
   doSearch();
@@ -1672,12 +1702,18 @@ async def api_import_csv(
         "matches_updated": 0,
         "rows_inserted": 0,
         "rows_skipped": 0,
+        "duplicates": 0,
         "excluded": 0,
         "errors": [],
+        "results": [],  # per-file: {filename, status, detail}
     }
+
+    def _record(filename: str, status: str, detail: str = ""):
+        summary["results"].append({"filename": filename, "status": status, "detail": detail})
 
     for f in files:
         summary["files"] += 1
+        fname = f.filename or "?"
         try:
             raw = await f.read()
             try:
@@ -1685,9 +1721,11 @@ async def api_import_csv(
             except UnicodeDecodeError:
                 text = raw.decode("latin-1")
 
-            meta = parse_fname(f.filename or "")
+            meta = parse_fname(fname)
             if not meta.get("date") or not meta.get("league"):
-                summary["errors"].append({"filename": f.filename, "reason": "filename không khớp pattern YYYYMMDD_HHMM_<league>-<home>_vs_<away>.csv"})
+                reason = "filename không khớp pattern YYYYMMDD_HHMM_<league>-<home>_vs_<away>.csv"
+                summary["errors"].append({"filename": fname, "reason": reason})
+                _record(fname, "error", reason)
                 continue
 
             dd, mm, yyyy = meta["date"].split("/")
@@ -1697,7 +1735,8 @@ async def api_import_csv(
 
             rows = read_csv_text(text)
             if not rows:
-                summary["errors"].append({"filename": f.filename, "reason": "CSV rỗng"})
+                summary["errors"].append({"filename": fname, "reason": "CSV rỗng"})
+                _record(fname, "error", "CSV rỗng")
                 continue
 
             r = bulk_import_csv_match(
@@ -1709,14 +1748,29 @@ async def api_import_csv(
             )
             if r["excluded"]:
                 summary["excluded"] += 1
+                _record(fname, "excluded", "competition bị loại (e-sports/virtual)")
                 continue
+
+            inserted = r.get("rows_inserted", 0)
+            skipped = r.get("rows_skipped", 0)
+            summary["rows_inserted"] += inserted
+            summary["rows_skipped"] += skipped
+
+            # Duplicate = match đã tồn tại + không có row mới nào được thêm
+            if not r["created"] and inserted == 0:
+                summary["duplicates"] += 1
+                _record(fname, "duplicate", f"đã có {skipped} dòng, bỏ qua")
+                continue
+
             if r["created"]:
                 summary["matches_created"] += 1
+                _record(fname, "created", f"+{inserted} dòng")
             else:
                 summary["matches_updated"] += 1
-            summary["rows_inserted"] += r["rows_inserted"]
-            summary["rows_skipped"] += r["rows_skipped"]
+                _record(fname, "updated", f"+{inserted} dòng (đã có {skipped})")
         except Exception as e:
-            summary["errors"].append({"filename": getattr(f, "filename", "?"), "reason": str(e)[:200]})
+            reason = str(e)[:200]
+            summary["errors"].append({"filename": fname, "reason": reason})
+            _record(fname, "error", reason)
 
     return JSONResponse(summary)

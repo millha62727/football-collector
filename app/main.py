@@ -1291,52 +1291,128 @@ function closeImportModal() {
   const drop = document.getElementById('importDrop');
   const inp = document.getElementById('importFile');
   if (!drop || !inp) return;
-  drop.addEventListener('click', () => inp.click());
+
+  // Allow folder selection via webkitdirectory toggle is impossible without
+  // re-rendering. Instead, expose folder picking via shift+click.
+  drop.addEventListener('click', e => {
+    inp.removeAttribute('webkitdirectory');
+    inp.removeAttribute('directory');
+    inp.click();
+  });
   drop.addEventListener('dragover', e => { e.preventDefault(); drop.style.borderColor='var(--primary)'; drop.style.color='var(--primary)'; });
   drop.addEventListener('dragleave', () => { drop.style.borderColor=''; drop.style.color=''; });
-  drop.addEventListener('drop', e => {
+  drop.addEventListener('drop', async e => {
     e.preventDefault(); drop.style.borderColor=''; drop.style.color='';
-    if (e.dataTransfer.files.length) doImport(e.dataTransfer.files);
+    const items = e.dataTransfer.items;
+    let csvFiles = [];
+    if (items && items.length && items[0].webkitGetAsEntry) {
+      // Folder-aware traversal
+      const promises = [];
+      for (let i = 0; i < items.length; i++) {
+        const entry = items[i].webkitGetAsEntry();
+        if (entry) promises.push(walkEntry(entry, csvFiles));
+      }
+      await Promise.all(promises);
+    } else {
+      // Fallback: flat FileList
+      for (const f of e.dataTransfer.files) if (isCsv(f.name)) csvFiles.push(f);
+    }
+    if (csvFiles.length) doImport(csvFiles);
+    else document.getElementById('importProgress').textContent = 'Không tìm thấy file .csv nào';
   });
   inp.addEventListener('change', () => {
-    if (inp.files.length) doImport(inp.files);
+    const csvs = Array.from(inp.files).filter(f => isCsv(f.name));
+    if (csvs.length) doImport(csvs);
   });
+
+  // Also expose a "chọn thư mục" link inside the drop zone via a 2nd input
+  const folderInp = document.createElement('input');
+  folderInp.type = 'file';
+  folderInp.webkitdirectory = true;
+  folderInp.directory = true;
+  folderInp.multiple = true;
+  folderInp.style.display = 'none';
+  folderInp.addEventListener('change', () => {
+    const csvs = Array.from(folderInp.files).filter(f => isCsv(f.name));
+    if (csvs.length) doImport(csvs);
+    else document.getElementById('importProgress').textContent = 'Thư mục không có file .csv';
+  });
+  document.body.appendChild(folderInp);
+  const folderLink = document.createElement('div');
+  folderLink.style.marginTop = '6px';
+  folderLink.style.fontSize = '11px';
+  folderLink.innerHTML = 'hoặc <span style="color:var(--primary);cursor:pointer;text-decoration:underline">chọn cả thư mục</span>';
+  folderLink.querySelector('span').addEventListener('click', e => { e.stopPropagation(); folderInp.click(); });
+  drop.appendChild(folderLink);
 })();
+
+function isCsv(name) { return /\.csv$/i.test(name || ''); }
+
+function walkEntry(entry, out) {
+  return new Promise(resolve => {
+    if (entry.isFile) {
+      entry.file(f => { if (isCsv(f.name)) out.push(f); resolve(); }, () => resolve());
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const readAll = () => {
+        reader.readEntries(async entries => {
+          if (!entries.length) { resolve(); return; }
+          await Promise.all(entries.map(e => walkEntry(e, out)));
+          readAll();
+        }, () => resolve());
+      };
+      readAll();
+    } else { resolve(); }
+  });
+}
+
 async function doImport(files) {
-  const fd = new FormData();
-  for (const f of files) fd.append('files', f);
   const prog = document.getElementById('importProgress');
   const res = document.getElementById('importResult');
-  prog.textContent = 'Đang gửi ' + files.length + ' file...';
   res.innerHTML = '';
-  try {
-    const r = await fetch('/api/data/import-csv', { method: 'POST', body: fd });
-    if (r.status === 401) { location.href = '/login'; return; }
-    const j = await r.json();
-    prog.textContent = '';
-    let h = '<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px">';
-    h += '<div><b style="color:var(--green)">✓</b> ' + j.files + ' file đã xử lý</div>';
-    h += '<div style="color:var(--muted);font-size:11px;margin-top:4px">';
-    h += 'Tạo mới: <b style="color:var(--green)">' + j.matches_created + '</b> · ';
-    h += 'Cập nhật: <b>' + j.matches_updated + '</b> · ';
-    h += 'Rows thêm: <b style="color:var(--primary)">' + j.rows_inserted + '</b> · ';
-    h += 'Bỏ qua: <b>' + j.rows_skipped + '</b>';
-    if (j.excluded) h += ' · Loại trừ: <b style="color:var(--orange)">' + j.excluded + '</b>';
-    h += '</div>';
-    if (j.errors && j.errors.length) {
-      h += '<div style="margin-top:8px;font-size:11px"><b style="color:var(--red)">Lỗi:</b><ul style="margin:4px 0 0 16px;color:var(--red)">';
-      for (const e of j.errors.slice(0, 8)) h += '<li>' + escHtml(e.filename) + ': ' + escHtml(e.reason) + '</li>';
-      if (j.errors.length > 8) h += '<li>... và ' + (j.errors.length - 8) + ' lỗi khác</li>';
-      h += '</ul></div>';
+  // Batch large uploads to avoid one giant request
+  const BATCH = 50;
+  const total = files.length;
+  let agg = { files:0, matches_created:0, matches_updated:0, rows_inserted:0, rows_skipped:0, excluded:0, errors:[] };
+  for (let i = 0; i < total; i += BATCH) {
+    const slice = Array.from(files).slice(i, i + BATCH);
+    prog.textContent = 'Đang upload ' + Math.min(i + slice.length, total) + ' / ' + total + ' file...';
+    const fd = new FormData();
+    for (const f of slice) fd.append('files', f, f.name);
+    try {
+      const r = await fetch('/api/data/import-csv', { method: 'POST', body: fd });
+      if (r.status === 401) { location.href = '/login'; return; }
+      const j = await r.json();
+      agg.files += j.files;
+      agg.matches_created += j.matches_created;
+      agg.matches_updated += j.matches_updated;
+      agg.rows_inserted += j.rows_inserted;
+      agg.rows_skipped += j.rows_skipped;
+      agg.excluded += j.excluded;
+      if (j.errors) agg.errors = agg.errors.concat(j.errors);
+    } catch (e) {
+      agg.errors.push({ filename:'(batch ' + (i/BATCH+1) + ')', reason: e.message });
     }
-    h += '</div>';
-    res.innerHTML = h;
-    // Refresh sidebar list
-    doSearch();
-  } catch (e) {
-    prog.textContent = '';
-    res.innerHTML = '<div style="color:var(--red)">Lỗi: ' + escHtml(e.message) + '</div>';
   }
+  prog.textContent = '';
+  let h = '<div style="background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px">';
+  h += '<div><b style="color:var(--green)">✓</b> ' + agg.files + ' file đã xử lý</div>';
+  h += '<div style="color:var(--muted);font-size:11px;margin-top:4px">';
+  h += 'Tạo mới: <b style="color:var(--green)">' + agg.matches_created + '</b> · ';
+  h += 'Cập nhật: <b>' + agg.matches_updated + '</b> · ';
+  h += 'Rows thêm: <b style="color:var(--primary)">' + agg.rows_inserted + '</b> · ';
+  h += 'Bỏ qua: <b>' + agg.rows_skipped + '</b>';
+  if (agg.excluded) h += ' · Loại trừ: <b style="color:var(--orange)">' + agg.excluded + '</b>';
+  h += '</div>';
+  if (agg.errors.length) {
+    h += '<div style="margin-top:8px;font-size:11px"><b style="color:var(--red)">Lỗi (' + agg.errors.length + '):</b><ul style="margin:4px 0 0 16px;color:var(--red);max-height:140px;overflow-y:auto">';
+    for (const e of agg.errors.slice(0, 30)) h += '<li>' + escHtml(e.filename) + ': ' + escHtml(e.reason) + '</li>';
+    if (agg.errors.length > 30) h += '<li>... và ' + (agg.errors.length - 30) + ' lỗi khác</li>';
+    h += '</ul></div>';
+  }
+  h += '</div>';
+  res.innerHTML = h;
+  doSearch();
 }
 </script>
 <script src="/static/lock.js"></script>

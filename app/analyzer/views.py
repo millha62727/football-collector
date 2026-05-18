@@ -39,7 +39,10 @@ _PAGE_HTML = """<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;font-size:13px}
 
-.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:50}
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10000}
+.btn-sm{padding:5px 12px;border-radius:var(--r);border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-size:12px;transition:all .15s;text-decoration:none;display:inline-block;font-family:inherit}
+.btn-sm:hover{border-color:var(--primary);color:var(--primary)}
+.btn-sm.danger:hover{border-color:var(--red);color:var(--red)}
 .hdr-logo{font-size:16px;font-weight:700;color:var(--primary)}
 .hdr a{color:var(--muted);text-decoration:none;font-size:13px}
 .hdr a:hover{color:var(--primary)}
@@ -142,6 +145,7 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
   <a href="/">&larr; Dashboard</a>
   <div class="hdr-spacer"></div>
   <span class="muted" id="user-info"></span>
+  <button class="btn-sm" onclick="goDisguise()">&#x1F504; &#x110;&#x1ED5;i</button>
   <form method="post" action="/logout" style="display:inline">
     <button type="submit" style="background:none;border:0;color:var(--muted);cursor:pointer;font-size:13px">Đăng xuất</button>
   </form>

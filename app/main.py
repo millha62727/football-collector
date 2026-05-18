@@ -207,8 +207,11 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
 
-/* ---- Header ---- */
-.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:100}
+/* ---- Header ----
+   z-index intentionally above the idle-lock overlay (9999) so the "🔄 Đổi"
+   button stays clickable even when the screen is locked, letting the user
+   one-click to the /market decoy from any state. */
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10000}
 .hdr-logo{font-size:17px;font-weight:700;color:var(--primary);display:flex;align-items:center;gap:6px}
 .hdr-spacer{flex:1}
 .hdr-info{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
@@ -807,7 +810,7 @@ _MATCH_DETAIL_HTML = """<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
 
-.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:100}
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10000}
 .hdr-back{color:var(--primary);text-decoration:none;font-size:14px;font-weight:600;padding:5px 10px;border-radius:var(--r);border:1px solid var(--border);transition:all .15s}
 .hdr-back:hover{background:var(--card);border-color:var(--primary)}
 .hdr-title{font-size:15px;font-weight:700;color:var(--text);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -876,6 +879,7 @@ tr:hover td{background:rgba(255,255,255,.025)}
   <a class="hdr-back" href="/">&larr; Quay lại</a>
   <div class="hdr-title" id="hdrTitle">Đang tải…</div>
   <a class="btn-sm" id="analyzeBtn" href="#" style="text-decoration:none">🔍 Phân tích</a>
+  <button class="btn-sm" onclick="goDisguise()">🔄 Đổi</button>
   <form method="post" action="/logout" style="margin:0">
     <button class="btn-sm danger" type="submit">Đăng xuất</button>
   </form>
@@ -1144,13 +1148,15 @@ tr:hover td{background:rgba(0,194,255,.03)}
 </head>
 <body>
 
-<!-- Return-gate: Telegram OTP required to leave the decoy -->
-<div class="gate-bg" id="gateBg">
+<!-- Return-gate: hidden by default. Server-side middleware (set on /market
+     visit, cleared on OTP verify) already prevents navigation away, so the
+     popup only opens when the user explicitly clicks the floating button. -->
+<div class="gate-bg hidden" id="gateBg">
   <div class="gate">
     <div class="gate-hdr">
       <span class="icon">&#x1F510;</span>
       <span class="title">X&#xE1;c th&#x1EF1;c &#x111;&#x1EC3; quay l&#x1EA1;i</span>
-      <button class="close" type="button" onclick="hideGate()" title="&#x110;&#xF3;ng t&#x1EA1;m">&times;</button>
+      <button class="close" type="button" onclick="hideGate()" title="&#x110;&#xF3;ng">&times;</button>
     </div>
     <div class="gate-body">
       <p>Phi&#xEA;n &#x111;ang &#x1EDF; <b>ch&#x1EBF; &#x111;&#x1ED9; decoy</b>. Nh&#x1EADp m&#xE3; OTP nh&#x1EADn qua Telegram &#x111;&#x1EC3; quay l&#x1EA1;i b&#x1EA3;ng &#x111;i&#x1EC1;u khi&#x1EC3;n.</p>
@@ -1164,7 +1170,7 @@ tr:hover td{background:rgba(0,194,255,.03)}
   </div>
 </div>
 
-<button class="gate-reopen" id="gateReopen" type="button" onclick="showGate()" title="M&#x1EDF; l&#x1EA1;i x&#xE1;c th&#x1EF1;c">&#x1F510;</button>
+<button class="gate-reopen on" id="gateReopen" type="button" onclick="showGate()" title="M&#x1EDF; x&#xE1;c th&#x1EF1;c">&#x1F510;</button>
 
 <nav class="nav">
   <div class="nav-brand">&#x2B21; CryptoWatch</div>
@@ -1230,9 +1236,13 @@ render();
 setInterval(tick,2200);
 
 // ───────────────────────────────────────────────────────────────────────
-// Return-gate: force a Telegram OTP before leaving /market.
-// Reuses the existing /api/lock/request-otp + /api/lock/verify-otp pair
-// (purpose="unlock") so we don't duplicate the bot plumbing.
+// Return-gate. The page is hidden by default — server-side middleware (the
+// market_gate cookie set on /market visit) already enforces that any other
+// route the user tries (Back, Forward, address bar, link click) bounces
+// straight back to /market. The popup only opens when the user explicitly
+// clicks the 🔐 floating button.
+// Reuses /api/lock/request-otp + /api/lock/verify-otp so we don't duplicate
+// the bot plumbing — verify-otp clears the cookie server-side on success.
 // ───────────────────────────────────────────────────────────────────────
 (function(){
   const gateBg = document.getElementById('gateBg');
@@ -1303,8 +1313,9 @@ setInterval(tick,2200);
       const j = await r.json();
       if (j.ok) {
         setMsg('Mở khoá thành công, đang chuyển hướng...', 'gate-ok');
-        // Drop the sessionStorage lock so the dashboard doesn't immediately
-        // re-lock on arrival.
+        // Drop the sessionStorage idle-lock so the dashboard doesn't immediately
+        // re-lock on arrival. The market_gate cookie was already cleared by the
+        // verify-otp response.
         try { sessionStorage.removeItem('fbc_locked'); } catch(_){}
         location.href = '/';
       } else {
@@ -1317,23 +1328,6 @@ setInterval(tick,2200);
       btnVer.disabled = false;
     }
   };
-
-  // Re-open the gate whenever the user tries to navigate away. Pushing a
-  // sentinel history entry + listening for popstate covers Back/Forward;
-  // the X just dismisses temporarily (until next nav attempt).
-  history.pushState({m:'gate'}, '', location.href);
-  window.addEventListener('popstate', () => {
-    history.pushState({m:'gate'}, '', location.href);
-    showGate();
-  });
-  // beforeunload nudge — browsers may suppress the message but the dialog
-  // itself fires, giving the user a moment to cancel.
-  window.addEventListener('beforeunload', (e) => {
-    if (!document.querySelector('a[data-allow-leave]:focus')) {
-      e.preventDefault();
-      e.returnValue = '';
-    }
-  });
 })();
 </script>
 </body>
@@ -1349,7 +1343,7 @@ _DATA_HTML = """<!DOCTYPE html>
 :root{--bg:#0d1117;--surface:#161b22;--card:#21262d;--border:#30363d;--primary:#58a6ff;--pdim:#1f3a5f;--red:#f85149;--green:#3fb950;--orange:#d29922;--purple:#bc8cff;--text:#c9d1d9;--muted:#8b949e;--r:6px;--font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
-.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:50}
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10000}
 .hdr-logo{font-size:16px;font-weight:700;color:var(--primary)}
 .hdr a{color:var(--muted);text-decoration:none;font-size:13px}
 .hdr a:hover{color:var(--primary)}
@@ -2074,6 +2068,32 @@ async def _security_headers(request: Request, call_next):
     return response
 
 
+# ---- Market-gate enforcement ----------------------------------------------
+# Routes the gated user is still allowed to hit: /market itself, the auth
+# pages, OTP endpoints (so they can verify and escape), static assets, and
+# health checks. Anything else is redirected to /market.
+_MARKET_GATE_ALLOW_PREFIXES = (
+    "/market",
+    "/login",
+    "/logout",
+    "/static/",
+    "/api/health",
+    "/api/auth/",
+    "/api/lock/",
+    "/api/telegram/diagnose",
+    "/favicon",
+)
+
+
+@app.middleware("http")
+async def _market_gate(request: Request, call_next):
+    if request.cookies.get("market_gate") == "pending":
+        path = request.url.path
+        if not any(path == p.rstrip("/") or path.startswith(p) for p in _MARKET_GATE_ALLOW_PREFIXES):
+            return RedirectResponse(url="/market", status_code=302)
+    return await call_next(request)
+
+
 # ---- Redirect 401 → /login ------------------------------------------------
 @app.exception_handler(401)
 async def _auth_redirect(request: Request, exc):
@@ -2260,9 +2280,30 @@ async def api_force(user: str = Depends(require_auth)):
 # New pages and API routes
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Market decoy + return-gate
+# ---------------------------------------------------------------------------
+# When the user lands on /market we set an HttpOnly cookie `market_gate=pending`.
+# A middleware (_market_gate, registered above) bounces every request for the
+# real app routes back to /market while the cookie is set. The cookie is
+# cleared only when /api/lock/verify-otp succeeds, so the only way out is a
+# valid Telegram OTP — even repeated Back-button presses just land back here.
+_MARKET_GATE_COOKIE = "market_gate"
+_MARKET_GATE_MAX_AGE = 60 * 60 * 24  # 24h
+
+
 @app.get("/market", response_class=HTMLResponse)
 async def market_page():
-    return HTMLResponse(_MARKET_HTML)
+    resp = HTMLResponse(_MARKET_HTML)
+    resp.set_cookie(
+        _MARKET_GATE_COOKIE,
+        "pending",
+        max_age=_MARKET_GATE_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return resp
 
 
 @app.get("/data", response_class=HTMLResponse)
@@ -2301,7 +2342,12 @@ async def api_lock_verify_otp(payload: dict = Body(...), user: str = Depends(req
     if not otp:
         return JSONResponse({"ok": False, "error": "Thiếu OTP"}, status_code=400)
     if verify_and_consume_otp(user, "unlock", otp):
-        return {"ok": True}
+        resp = JSONResponse({"ok": True})
+        # Also clear the market gate (if set) — same OTP serves both idle-lock
+        # and market-return flows. The cookie was set with HttpOnly so JS can't
+        # tamper; clearing here is the only escape from /market.
+        resp.delete_cookie(_MARKET_GATE_COOKIE, path="/")
+        return resp
     return JSONResponse({"ok": False, "error": "OTP không đúng hoặc đã hết hạn"}, status_code=401)
 
 

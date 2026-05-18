@@ -1,8 +1,14 @@
-"""One-way Telegram notifier for OTP delivery.
+"""One-way Telegram notifier for OTP delivery + goal alerts.
 
-Reads BOT_TOKEN + CHAT_IDS from environment. No long-polling — the bot is
-only used to push messages out (login OTP, idle-lock OTP). Users read the
-message in Telegram and paste the code back into the web UI.
+Reads BOT_TOKEN + CHAT_IDS from the `telegram_settings` DB row first, then
+from environment as fallback. No long-polling — the bot is only used to push
+messages out (login OTP, idle-lock OTP, goal alerts). Users read the message
+in Telegram and paste the code back into the web UI.
+
+Why dynamic env lookup: collector.py calls `load_dotenv()` at import, but the
+web server (uvicorn → app.main) doesn't necessarily have an early dotenv hook,
+so reading `os.getenv` lazily — instead of at module import — survives both
+entry points without coupling.
 """
 from __future__ import annotations
 
@@ -16,15 +22,26 @@ from typing import Iterable
 
 log = logging.getLogger(__name__)
 
-_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-_CHAT_IDS_RAW = os.getenv("TELEGRAM_CHAT_IDS", "").strip()
 _TIMEOUT = 10
 
 
+def _get_bot_token() -> str:
+    """Bot token: DB row overrides env. Env stripped so trailing newlines lose."""
+    try:
+        from .database import get_telegram_settings
+        db = (get_telegram_settings().get("bot_token") or "").strip()
+        if db:
+            return db
+    except Exception:
+        pass
+    return os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+
+
 def _chat_ids_from_env() -> list[str]:
-    if not _CHAT_IDS_RAW:
+    raw = os.getenv("TELEGRAM_CHAT_IDS", "").strip()
+    if not raw:
         return []
-    return [c.strip() for c in _CHAT_IDS_RAW.split(",") if c.strip()]
+    return [c.strip() for c in raw.split(",") if c.strip()]
 
 
 def _chat_ids() -> list[str]:
@@ -44,8 +61,37 @@ def _chat_ids() -> list[str]:
 
 
 def is_configured() -> bool:
-    """True when both BOT_TOKEN and at least one CHAT_ID are present."""
-    return bool(_BOT_TOKEN) and bool(_chat_ids())
+    """True when both a bot token and at least one chat id are resolvable."""
+    return bool(_get_bot_token()) and bool(_chat_ids())
+
+
+def diagnose() -> dict:
+    """Surface the resolved state so the UI can show a precise reason on failure."""
+    token = _get_bot_token()
+    chats = _chat_ids()
+    return {
+        "has_bot_token": bool(token),
+        "has_chat_ids": bool(chats),
+        "chat_count": len(chats),
+        "token_source": "db" if _has_db_token() else ("env" if token else "none"),
+        "chat_source": "db" if _has_db_chats() else ("env" if chats else "none"),
+    }
+
+
+def _has_db_token() -> bool:
+    try:
+        from .database import get_telegram_settings
+        return bool((get_telegram_settings().get("bot_token") or "").strip())
+    except Exception:
+        return False
+
+
+def _has_db_chats() -> bool:
+    try:
+        from .database import get_telegram_settings
+        return bool((get_telegram_settings().get("chat_ids") or "").strip())
+    except Exception:
+        return False
 
 
 def send_message(text: str, chat_ids: Iterable[str] | None = None) -> dict:
@@ -54,13 +100,16 @@ def send_message(text: str, chat_ids: Iterable[str] | None = None) -> dict:
     Failure to deliver to one chat does not block the others. The web UI
     treats overall success as: at least one chat_id received the message.
     """
+    bot_token = _get_bot_token()
     targets = list(chat_ids) if chat_ids is not None else _chat_ids()
-    if not _BOT_TOKEN:
-        return {"ok": False, "sent": 0, "total": 0, "error": "TELEGRAM_BOT_TOKEN chưa được cấu hình"}
+    if not bot_token:
+        return {"ok": False, "sent": 0, "total": 0,
+                "error": "Bot token chưa cấu hình (đặt TELEGRAM_BOT_TOKEN trong .env hoặc nhập trong Cài đặt Telegram)"}
     if not targets:
-        return {"ok": False, "sent": 0, "total": 0, "error": "TELEGRAM_CHAT_IDS chưa được cấu hình"}
+        return {"ok": False, "sent": 0, "total": 0,
+                "error": "Không có chat_id nào (đặt TELEGRAM_CHAT_IDS trong .env hoặc nhập trong Cài đặt Telegram)"}
 
-    url = f"https://api.telegram.org/bot{_BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     sent = 0
     errors: list[str] = []
     for cid in targets:

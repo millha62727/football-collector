@@ -410,8 +410,16 @@ def init_db() -> None:
                         include_goal_3       BOOLEAN NOT NULL DEFAULT TRUE,
                         include_goal_4       BOOLEAN NOT NULL DEFAULT FALSE,
                         chat_ids             TEXT NOT NULL DEFAULT '',
+                        bot_token            TEXT NOT NULL DEFAULT '',
                         updated_at           TIMESTAMPTZ DEFAULT NOW()
                     )
+                """)
+                # Migrate older deploys that don't have bot_token yet.
+                cur.execute("""
+                    DO $$ BEGIN
+                        ALTER TABLE telegram_settings ADD COLUMN bot_token TEXT NOT NULL DEFAULT '';
+                    EXCEPTION WHEN duplicate_column THEN NULL;
+                    END $$
                 """)
                 cur.execute("INSERT INTO telegram_settings (id) VALUES (1) ON CONFLICT DO NOTHING")
 
@@ -588,7 +596,7 @@ _TELEGRAM_SETTINGS_COLUMNS = (
     "scope", "goal_threshold", "before_minute",
     "include_match_name", "include_competition",
     "include_goal_1", "include_goal_2", "include_goal_3", "include_goal_4",
-    "chat_ids",
+    "chat_ids", "bot_token",
 )
 
 
@@ -603,7 +611,7 @@ def get_telegram_settings() -> dict:
             "include_match_name": True, "include_competition": True,
             "include_goal_1": True, "include_goal_2": True,
             "include_goal_3": True, "include_goal_4": False,
-            "chat_ids": "",
+            "chat_ids": "", "bot_token": "",
         }
     out = dict(row)
     out.pop("id", None)

@@ -11,6 +11,16 @@ from contextlib import asynccontextmanager
 from typing import Optional
 from urllib.parse import quote
 
+# Load .env BEFORE importing any module that reads env vars. Without this the
+# web server has no TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_IDS when running outside
+# docker-compose (which sets `env_file`). The collector already calls this in
+# app/collector.py, so the bug only affected uvicorn-launched dev/prod.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv()
+except Exception:
+    pass
+
 from fastapi import Body, Cookie, Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -451,9 +461,13 @@ tr:hover td{background:rgba(255,255,255,.025)}
       <label class="modal-check"><input type="checkbox" id="tgIncG4"> Bàn 4</label>
     </fieldset>
 
-    <label>Chat ID (phân cách dấu phẩy, để trống dùng .env)</label>
+    <label>Bot token (để trống = dùng <code>TELEGRAM_BOT_TOKEN</code> từ .env)</label>
+    <input type="text" id="tgBotToken" placeholder="123456:ABC-DEF...">
+
+    <label>Chat ID (phân cách dấu phẩy, để trống = dùng <code>TELEGRAM_CHAT_IDS</code> từ .env)</label>
     <input type="text" id="tgChats" placeholder="123456789,987654321">
 
+    <div id="tgDiag" style="margin-top:10px;font-size:11px;color:var(--muted)"></div>
     <div class="modal-status" id="tgStatus"></div>
 
     <div class="modal-actions">
@@ -710,8 +724,18 @@ async function openTelegramModal(){
   document.getElementById('tgIncG3').checked = !!m.include_goal_3;
   document.getElementById('tgIncG4').checked = !!m.include_goal_4;
   document.getElementById('tgChats').value = m.chat_ids || '';
+  document.getElementById('tgBotToken').value = m.bot_token || '';
   document.getElementById('tgStatus').textContent = '';
   document.getElementById('tgModal').classList.add('on');
+  await refreshTgDiag();
+}
+async function refreshTgDiag(){
+  const d = await apiFetch('/api/telegram/diagnose');
+  const el = document.getElementById('tgDiag');
+  if (!d) { el.textContent = ''; return; }
+  el.innerHTML =
+    'Bot token: <b style="color:'+(d.has_bot_token?'var(--green)':'var(--red)')+'">'+(d.has_bot_token?('OK · '+d.token_source):'thiếu')+'</b>' +
+    ' · Chat ID: <b style="color:'+(d.has_chat_ids?'var(--green)':'var(--red)')+'">'+(d.has_chat_ids?(d.chat_count+' chat · '+d.chat_source):'thiếu')+'</b>';
 }
 function closeTelegramModal(){ document.getElementById('tgModal').classList.remove('on'); }
 async function saveTelegramSettings(){
@@ -726,6 +750,7 @@ async function saveTelegramSettings(){
     include_goal_3: document.getElementById('tgIncG3').checked,
     include_goal_4: document.getElementById('tgIncG4').checked,
     chat_ids: document.getElementById('tgChats').value.trim(),
+    bot_token: document.getElementById('tgBotToken').value.trim(),
   };
   const r = await fetch('/api/telegram/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
   if (!r || !r.ok) { document.getElementById('tgStatus').textContent = 'Lỗi lưu cấu hình'; return; }
@@ -737,10 +762,18 @@ async function saveTelegramSettings(){
   }, 500);
 }
 async function testTelegram(){
-  const r = await apiFetch('/api/telegram/test', {method:'POST'});
   const el = document.getElementById('tgStatus');
-  if (!r) { el.textContent = 'Không gửi được tin thử.'; return; }
-  el.textContent = r.ok ? ('Đã gửi ' + (r.sent||0) + '/' + (r.total||0) + ' chat.') : ('Lỗi: ' + (r.error||''));
+  el.textContent = 'Đang gửi tin thử...';
+  const r = await fetch('/api/telegram/test', {method:'POST'});
+  if (r.status === 401) { location.href='/login'; return; }
+  let j = null; try { j = await r.json(); } catch(_) {}
+  await refreshTgDiag();
+  if (!j) { el.textContent = 'Không gửi được tin thử (HTTP '+r.status+').'; return; }
+  if (j.ok) {
+    el.textContent = 'Đã gửi ' + (j.sent||0) + '/' + (j.total||0) + ' chat. Mở Telegram kiểm tra.';
+  } else {
+    el.textContent = 'Lỗi: ' + (j.error || 'unknown');
+  }
 }
 
 // ------------------------------------------------------------------ init
@@ -1924,9 +1957,11 @@ async def api_request_otp(request: Request, payload: dict = Body(...)):
         # but skip the Telegram send.
         print(f"[WARN] OTP requested for unknown user '{username}' from {ip}", flush=True)
         return JSONResponse({"ok": True, "ttl_seconds": _OTP_TTL})
-    if not tg.is_configured():
+    diag = tg.diagnose()
+    if not diag["has_bot_token"] or not diag["has_chat_ids"]:
         return JSONResponse(
-            {"ok": False, "error": "Bot Telegram chưa được cấu hình (.env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS)"},
+            {"ok": False,
+             "error": f"Bot Telegram chưa được cấu hình ({diag}) — đặt TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_IDS trong .env hoặc Cài đặt Telegram"},
             status_code=500,
         )
 
@@ -2080,9 +2115,10 @@ async def api_lock_request_otp(user: str = Depends(require_auth)):
     from .database import store_otp
     from . import telegram as tg
 
-    if not tg.is_configured():
+    diag = tg.diagnose()
+    if not diag["has_bot_token"] or not diag["has_chat_ids"]:
         return JSONResponse(
-            {"ok": False, "error": "Bot Telegram chưa được cấu hình"},
+            {"ok": False, "error": f"Bot Telegram chưa được cấu hình ({diag})"},
             status_code=500,
         )
     otp = f"{secrets.randbelow(1_000_000):06d}"
@@ -2163,12 +2199,34 @@ async def api_telegram_settings_save(payload: dict = Body(...), user: str = Depe
 @app.post("/api/telegram/test")
 async def api_telegram_test(user: str = Depends(require_auth)):
     from . import telegram as tg
-    if not tg.is_configured():
-        return JSONResponse({"ok": False, "error": "Bot Telegram chưa được cấu hình"}, status_code=400)
+    diag = tg.diagnose()
+    if not diag["has_bot_token"]:
+        return JSONResponse({
+            "ok": False,
+            "error": "Bot token chưa cấu hình (đặt TELEGRAM_BOT_TOKEN trong .env hoặc nhập trong Cài đặt Telegram)",
+            "diag": diag,
+        }, status_code=400)
+    if not diag["has_chat_ids"]:
+        return JSONResponse({
+            "ok": False,
+            "error": "Chưa có chat_id (đặt TELEGRAM_CHAT_IDS trong .env hoặc nhập trong Cài đặt Telegram)",
+            "diag": diag,
+        }, status_code=400)
     result = tg.send_message("✅ <b>Test thành công</b>\nFootball Collector — Telegram Setting hoạt động.")
     if not result.get("ok"):
-        return JSONResponse({"ok": False, "error": result.get("error") or "Không gửi được"}, status_code=502)
-    return {"ok": True, "sent": result.get("sent"), "total": result.get("total")}
+        return JSONResponse({
+            "ok": False,
+            "error": result.get("error") or "Không gửi được",
+            "diag": diag,
+        }, status_code=502)
+    return {"ok": True, "sent": result.get("sent"), "total": result.get("total"), "diag": diag}
+
+
+@app.get("/api/telegram/diagnose")
+async def api_telegram_diagnose(user: str = Depends(require_auth)):
+    """Surface exactly what's wired up so the UI can show a precise reason."""
+    from . import telegram as tg
+    return JSONResponse(tg.diagnose())
 
 
 # ---------------------------------------------------------------------------

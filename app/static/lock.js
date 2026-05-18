@@ -16,7 +16,9 @@
 
   function $(id) { return document.getElementById(id); }
 
-  function showLock() {
+  // Exposed on `window` so callers (e.g. the Telegram Settings modal — Yêu cầu #12)
+  // can force re-auth after a privileged save.
+  window.showLock = function showLock() {
     sessionStorage.setItem(LOCK_KEY, '1');
     const el = $('lockOverlay');
     if (!el) return;
@@ -31,7 +33,9 @@
     const msg = $('lockMsg'); if (msg) msg.textContent = 'Bấm "Xin OTP mới" để nhận mã qua Telegram.';
     const btnReq = $('lockBtnReq');    if (btnReq) { btnReq.disabled = false; btnReq.textContent = 'Xin OTP mới'; }
     const btnVer = $('lockBtnVerify'); if (btnVer) btnVer.disabled = true;
-  }
+  };
+  // Internal alias kept for clarity within this IIFE.
+  const showLock = window.showLock;
 
   function hideLock() {
     sessionStorage.removeItem(LOCK_KEY);

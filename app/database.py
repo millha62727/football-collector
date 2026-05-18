@@ -58,6 +58,45 @@ def is_excluded_competition(name: Optional[str]) -> bool:
         return True
     return bool(_EXCLUDE_PES_RE.search(name))
 
+
+# Hand-curated tier-1 / "uy tín" league name fragments — case-insensitive
+# substring match against `matches.competition`. Vietnamese names match the
+# strings emitted by the upstream API (verified against the existing CSV
+# fixture filename in app/analyzer/).
+PRESTIGIOUS_COMPETITIONS: tuple[str, ...] = (
+    "UEFA Champions League", "Champions League",
+    "Copa do Brasil", "Cúp vô địch CONCACAF", "CONCACAF",
+    "Vòng loại World Cup", "World Cup",
+    "CAF",
+    "Giải hạng Nhất Bỉ", "Cúp Quốc gia Bỉ",
+    "Thụy Sĩ Super League", "Giải VĐQG Áo",
+    "Giải hạng Nhất Ba Lan", "Giải hạng Nhất Scotland",
+    "Cúp Quốc gia Hy Lạp",
+    "Championship Anh", "2. Bundesliga",
+    "Segunda División", "Serie B Ý", "Ligue 2",
+    "Cúp Nhà vua Tây Ban Nha", "Cúp Quốc gia Ý",
+    "Cúp Quốc gia Đức", "Cúp Quốc gia Bồ Đào Nha",
+    "Cúp Quốc gia Hà Lan", "Cúp Liên Đoàn Anh",
+    "Cúp Liên lục địa", "AFC Champions League", "Cúp FA Anh",
+    "Premier League", "La Liga",
+    "Serie A Ý", "Bundesliga", "Ligue 1",
+    "Serie A Brazil", "Giải VĐQG Argentina",
+    "J1 League", "K League 1",
+    "MLS", "Saudi Pro League",
+    "Süper Lig", "Eredivisie",
+    "Primeira Liga", "Giải VĐQG Nữ Nga",
+    "Cúp U23 châu Á", "Cúp Quốc gia Pháp",
+    "Giải hạng Nhất Đan Mạch", "Giải VĐQG Đan Mạch",
+)
+
+
+def is_prestigious(name: Optional[str]) -> bool:
+    """Case-insensitive substring match against the curated tier-1 league list."""
+    if not name:
+        return False
+    lower = name.lower()
+    return any(p.lower() in lower for p in PRESTIGIOUS_COMPETITIONS)
+
 # --- Connection pool -------------------------------------------------------
 
 _pool: Optional[ThreadedConnectionPool] = None
@@ -233,6 +272,16 @@ def init_db() -> None:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_matches_status     ON matches(status)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_matches_start_time ON matches(start_time_utc)")
 
+                # Provenance: 'api' (collector) vs 'csv' (bulk import). Drives the
+                # dashboard TỔNG card.
+                cur.execute("""
+                    DO $$ BEGIN
+                        ALTER TABLE matches ADD COLUMN source TEXT NOT NULL DEFAULT 'api';
+                    EXCEPTION WHEN duplicate_column THEN NULL;
+                    END $$
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_matches_source ON matches(source)")
+
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS match_odds_history (
                         id                  BIGSERIAL PRIMARY KEY,
@@ -321,6 +370,57 @@ def init_db() -> None:
                         sent_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         used_at     TIMESTAMPTZ,
                         PRIMARY KEY (username, purpose)
+                    )
+                """)
+
+                # Per-goal record. Captures HC/OU snapshots taken at the moment the
+                # goal lands, used by the Layer 3 advanced search ("HC after goal #k"
+                # / "OU before goal #k") and the Telegram alert body.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS match_goals (
+                        id           BIGSERIAL PRIMARY KEY,
+                        match_id     TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+                        occurred_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        goal_number  INT NOT NULL,
+                        team         TEXT NOT NULL CHECK (team IN ('home','away')),
+                        minute       INTEGER,
+                        home_score   INTEGER,
+                        away_score   INTEGER,
+                        hc_before    TEXT,
+                        hc_after     TEXT,
+                        ou_before    TEXT,
+                        ou_after     TEXT,
+                        UNIQUE (match_id, goal_number)
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_goals_match ON match_goals(match_id, goal_number)")
+
+                # Singleton row holding Telegram alert configuration. id=1 enforced
+                # by CHECK so admin UI cannot accidentally create siblings.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS telegram_settings (
+                        id                   INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                        scope                TEXT NOT NULL DEFAULT 'prestigious',
+                        goal_threshold       INT  NOT NULL DEFAULT 3,
+                        before_minute        INT  NOT NULL DEFAULT 75,
+                        include_match_name   BOOLEAN NOT NULL DEFAULT TRUE,
+                        include_competition  BOOLEAN NOT NULL DEFAULT TRUE,
+                        include_goal_1       BOOLEAN NOT NULL DEFAULT TRUE,
+                        include_goal_2       BOOLEAN NOT NULL DEFAULT TRUE,
+                        include_goal_3       BOOLEAN NOT NULL DEFAULT TRUE,
+                        include_goal_4       BOOLEAN NOT NULL DEFAULT FALSE,
+                        chat_ids             TEXT NOT NULL DEFAULT '',
+                        updated_at           TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("INSERT INTO telegram_settings (id) VALUES (1) ON CONFLICT DO NOTHING")
+
+                # De-dup log: at most one Telegram alert per match per "session"
+                # (clearable manually if the user wants to re-arm).
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS alert_log (
+                        match_id      TEXT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
+                        triggered_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     )
                 """)
                 # Seed default state rows (DO NOTHING if already exist)
@@ -442,6 +542,127 @@ def invalidate_otp(username: str, purpose: str) -> None:
         )
 
 
+# --- Maintenance / scheduling helpers --------------------------------------
+
+def stale_finish_sweep(stale_after_hours: int = 6) -> int:
+    """Force-FT live-flagged matches whose `last_seen` is older than the cutoff.
+
+    The upstream API stops returning a match a few hours after kickoff. Without
+    this sweep, finished matches keep their last live status (LIVE/H1/H2) forever
+    and inflate the dashboard's LIVE/HT counters.
+    """
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            UPDATE matches
+               SET status = 'FT'
+             WHERE status = ANY(%s)
+               AND last_seen IS NOT NULL
+               AND last_seen::timestamptz < NOW() - (%s || ' hours')::interval
+            """,
+            [list(_LIVE_STATUSES), str(int(stale_after_hours))],
+        )
+        return cur.rowcount
+
+
+def db_count_upcoming_within(minutes: int) -> int:
+    """Number of UPCOMING matches whose kickoff falls in the next `minutes`."""
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM matches
+             WHERE status = 'UPCOMING'
+               AND start_time_utc::timestamptz BETWEEN NOW() AND NOW() + (%s || ' minutes')::interval
+            """,
+            (str(int(minutes)),),
+        )
+        row = cur.fetchone()
+    return int(row[0] if row else 0)
+
+
+# --- Telegram settings (singleton row) --------------------------------------
+
+_TELEGRAM_SETTINGS_COLUMNS = (
+    "scope", "goal_threshold", "before_minute",
+    "include_match_name", "include_competition",
+    "include_goal_1", "include_goal_2", "include_goal_3", "include_goal_4",
+    "chat_ids",
+)
+
+
+def get_telegram_settings() -> dict:
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM telegram_settings WHERE id = 1")
+        row = cur.fetchone()
+    if not row:
+        return {
+            "scope": "prestigious", "goal_threshold": 3, "before_minute": 75,
+            "include_match_name": True, "include_competition": True,
+            "include_goal_1": True, "include_goal_2": True,
+            "include_goal_3": True, "include_goal_4": False,
+            "chat_ids": "",
+        }
+    out = dict(row)
+    out.pop("id", None)
+    out.pop("updated_at", None)
+    return out
+
+
+def update_telegram_settings(values: dict) -> dict:
+    """Upsert the singleton settings row. Unknown keys are ignored."""
+    allowed = {k: values[k] for k in _TELEGRAM_SETTINGS_COLUMNS if k in values}
+    if not allowed:
+        return get_telegram_settings()
+    set_clause = ", ".join(f"{k} = %s" for k in allowed)
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE telegram_settings SET {set_clause}, updated_at = NOW() WHERE id = 1",
+            list(allowed.values()),
+        )
+        if cur.rowcount == 0:
+            # First-time insert path (race-safe with ON CONFLICT)
+            cols = ", ".join(allowed.keys())
+            placeholders = ", ".join(["%s"] * len(allowed))
+            cur.execute(
+                f"INSERT INTO telegram_settings (id, {cols}) VALUES (1, {placeholders}) "
+                f"ON CONFLICT (id) DO UPDATE SET {set_clause}, updated_at = NOW()",
+                list(allowed.values()) + list(allowed.values()),
+            )
+    return get_telegram_settings()
+
+
+# --- Priority highlight -----------------------------------------------------
+
+def compute_priority(match: dict, last_goal_secs_ago: Optional[float]) -> int:
+    """Map a match row to its dashboard highlight tier (1 = top).
+
+    Tier rules — see Yêu cầu #4:
+      1 : ≥3 goals before minute 75 AND prestigious league
+      2 : ≥3 goals before minute 75 (any league)
+      3 : prestigious AND a goal within the last 3 minutes
+      4 : prestigious
+      5 : everything else
+    """
+    total = int((match.get("home_score") or 0) + (match.get("away_score") or 0))
+    minute = match.get("minute") or 0
+    prestigious = is_prestigious(match.get("competition"))
+    recent_goal = last_goal_secs_ago is not None and last_goal_secs_ago < 180
+
+    if total >= 3 and minute < 75 and prestigious:
+        return 1
+    if total >= 3 and minute < 75:
+        return 2
+    if prestigious and recent_goal:
+        return 3
+    if prestigious:
+        return 4
+    return 5
+
+
 # --- Write -----------------------------------------------------------------
 
 _ODDS_FIELDS = (
@@ -451,9 +672,16 @@ _ODDS_FIELDS = (
     "odds_1", "odds_x", "odds_2",
 )
 
+# Snapshot persistence is gated on these fields only — Yêu cầu #11.
+# Noisy 1x2/odds-decimal updates no longer create new history rows; they still
+# flow into the `matches` row so the live UI sees them.
+_PERSIST_TRIGGER_FIELDS = (
+    "home_handicap", "away_handicap", "ou_line",
+)
+
 
 def _odds_changed(match: Match, prev: dict) -> bool:
-    for f in _ODDS_FIELDS:
+    for f in _PERSIST_TRIGGER_FIELDS:
         if getattr(match, f) != prev.get(f):
             return True
     return False
@@ -571,12 +799,14 @@ def upsert_match(match: Match) -> None:
         if _odds_changed(match, prev):
             _record_odds_snapshot(cur, match)
 
-        if match.home_score != prev.get("home_score"):
+        scored_home = match.home_score != prev.get("home_score")
+        scored_away = match.away_score != prev.get("away_score")
+        if scored_home:
             _record_event(
                 cur, match, "GOAL",
                 f"Home {prev.get('home_score')}→{match.home_score}",
             )
-        if match.away_score != prev.get("away_score"):
+        if scored_away:
             _record_event(
                 cur, match, "GOAL",
                 f"Away {prev.get('away_score')}→{match.away_score}",
@@ -587,18 +817,123 @@ def upsert_match(match: Match) -> None:
                 f"{prev.get('status')} → {match.status}",
             )
 
+        if scored_home or scored_away:
+            _on_goal_scored(cur, match, prev, scored_home, scored_away)
+
+
+def _on_goal_scored(cur, match: Match, prev: dict, scored_home: bool, scored_away: bool) -> None:
+    """Insert match_goals row(s) + fire Telegram alert if conditions met.
+
+    Drives Yêu cầu #7. Score deltas might be >1 in pathological cases (cancelled
+    goal that re-scored same poll), so we iterate the delta. Per-goal HC/OU
+    "before/after" capture: 'before' = the prev row's snapshot, 'after' =
+    match.* (the just-applied state).
+    """
+    team = "home" if scored_home else "away"
+    # Determine current total goal_number from any prior rows for this match.
+    cur.execute(
+        "SELECT COALESCE(MAX(goal_number), 0) AS g FROM match_goals WHERE match_id = %s",
+        (match.id,),
+    )
+    next_num = (cur.fetchone() or {}).get("g", 0) + 1
+
+    if scored_home:
+        delta = (match.home_score or 0) - (prev.get("home_score") or 0)
+    else:
+        delta = (match.away_score or 0) - (prev.get("away_score") or 0)
+    if delta < 1:  # cancellations / parser glitches — bail out cleanly
+        return
+
+    for _ in range(delta):
+        cur.execute(
+            """
+            INSERT INTO match_goals (
+                match_id, goal_number, team, minute,
+                home_score, away_score,
+                hc_before, hc_after, ou_before, ou_after
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (match_id, goal_number) DO NOTHING
+            """,
+            (
+                match.id, next_num, team, match.minute,
+                match.home_score, match.away_score,
+                prev.get("home_handicap"), match.home_handicap,
+                prev.get("ou_line"), match.ou_line,
+            ),
+        )
+        next_num += 1
+
+    # --- Alert evaluation ---------------------------------------------------
+    total_goals = (match.home_score or 0) + (match.away_score or 0)
+    minute = match.minute or 0
+    settings = get_telegram_settings()
+    if total_goals < int(settings.get("goal_threshold", 3)):
+        return
+    if minute >= int(settings.get("before_minute", 75)):
+        return
+    if settings.get("scope") == "prestigious" and not is_prestigious(match.competition):
+        return
+
+    # De-dup: at most one alert per match (UNIQUE PK on alert_log.match_id).
+    cur.execute(
+        "INSERT INTO alert_log (match_id) VALUES (%s) ON CONFLICT DO NOTHING",
+        (match.id,),
+    )
+    if cur.rowcount != 1:
+        return  # already alerted
+
+    # Fetch the goal sequence for the message body.
+    cur.execute(
+        """
+        SELECT goal_number, team, minute, hc_before, hc_after, ou_before, ou_after
+          FROM match_goals
+         WHERE match_id = %s
+         ORDER BY goal_number ASC
+        """,
+        (match.id,),
+    )
+    goals = [dict(r) for r in cur.fetchall()]
+    try:
+        from . import telegram as _tg  # late import to avoid cycle on init
+        _tg.send_goal_alert(match, goals, settings)
+    except Exception:
+        # Alert delivery must never break ingestion — swallow + log via stderr.
+        import traceback, sys
+        print("[telegram] alert send failed:", file=sys.stderr)
+        traceback.print_exc()
+
 
 # --- Read ------------------------------------------------------------------
 
 def get_all_matches(limit: int = 500) -> list[dict[str, Any]]:
+    """Match list enriched with priority_level for the dashboard highlight tiers.
+
+    The LEFT JOIN LATERAL pulls the most recent GOAL event per match so we can
+    detect "scored within the last 3 minutes" without a second query.
+    """
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
-            f"SELECT * FROM matches WHERE {_EXCLUDE_COMP_SQL} "
-            f"ORDER BY start_time_utc DESC LIMIT %s",
+            f"""
+            SELECT m.*,
+                   EXTRACT(EPOCH FROM (NOW() - g.occurred_at)) AS last_goal_secs
+              FROM matches m
+              LEFT JOIN LATERAL (
+                  SELECT occurred_at FROM match_events
+                   WHERE match_id = m.id AND event_type = 'GOAL'
+                   ORDER BY occurred_at DESC LIMIT 1
+              ) g ON TRUE
+             WHERE {_EXCLUDE_COMP_SQL}
+             ORDER BY m.start_time_utc DESC
+             LIMIT %s
+            """,
             _EXCLUDE_COMP_PATTERNS + [limit],
         )
-        return [dict(r) for r in cur.fetchall()]
+        rows = [dict(r) for r in cur.fetchall()]
+    for r in rows:
+        last_goal = r.pop("last_goal_secs", None)
+        r["priority_level"] = compute_priority(r, float(last_goal) if last_goal is not None else None)
+    return rows
 
 
 def get_live_matches() -> list[dict[str, Any]]:
@@ -625,10 +960,17 @@ def get_stats() -> dict[str, Any]:
             _EXCLUDE_COMP_PATTERNS,
         )
         total = cur.fetchone()["count"]
+        # CSV-imported subset — drives the dashboard TỔNG card (Yêu cầu #1).
+        cur.execute(
+            f"SELECT COUNT(*) FROM matches WHERE source = 'csv' AND {_EXCLUDE_COMP_SQL}",
+            _EXCLUDE_COMP_PATTERNS,
+        )
+        csv_total = cur.fetchone()["count"]
 
     by_status = {r["status"]: r["cnt"] for r in rows}
     return {
         "total": total,
+        "csv_total": csv_total,
         "live": sum(by_status.get(s, 0) for s in _LIVE_STATUSES),
         "ht": by_status.get("HT", 0),
         "upcoming": by_status.get("UPCOMING", 0),
@@ -654,10 +996,22 @@ def _iso(row: dict, *fields: str) -> dict:
 
 
 def get_odds_history(match_id: str, limit: int = 500) -> list[dict[str, Any]]:
+    """Snapshot history feeding the match-detail "Biến động kèo" table.
+
+    `minute` + `status` are surfaced explicitly so the front-end can render
+    in-half time (1H:24, HT, 2H:10, FT) instead of raw wall-clock time —
+    Yêu cầu #2.
+    """
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
-            "SELECT * FROM match_odds_history WHERE match_id = %s "
+            "SELECT id, match_id, captured_at, "
+            "home_handicap, home_handicap_odds, "
+            "away_handicap, away_handicap_odds, "
+            "ou_line, over_odds, under_odds, "
+            "odds_1, odds_x, odds_2, "
+            "minute, home_score, away_score, status "
+            "FROM match_odds_history WHERE match_id = %s "
             "ORDER BY captured_at ASC LIMIT %s",
             (match_id, limit),
         )
@@ -720,22 +1074,205 @@ def search_matches(q: str = "", date_from: str = "", date_to: str = "", status: 
         return [dict(r) for r in cur.fetchall()]
 
 
-def get_timeline_stats(period: str = "day") -> dict:
+def _norm_match_str(v) -> Optional[str]:
+    """Normalize HC/OU comparison values: strip, blank→None, numeric→canonical."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    try:
+        # Reformat numeric strings ("0.50", "-.25") to a stable canonical form
+        # so '0.5' and '0.50' compare equal.
+        f = float(s)
+        return f"{f:g}"
+    except ValueError:
+        return s
+
+
+def advanced_search(
+    open_hc=None, open_ou=None,
+    ou_before_goal: Optional[dict] = None,
+    hc_after_goal: Optional[dict] = None,
+    limit: int = 200,
+) -> list[dict]:
+    """Search matches by opening HC/OU + per-goal HC/OU constraints — Yêu cầu #8.
+
+    Implementation: pull candidate matches (with their first odds snapshot for
+    "opening" comparison), then filter Python-side against `match_goals` for the
+    per-goal constraints. This keeps the SQL simple and avoids fragile lateral
+    joins; the candidate set is naturally small because Layer 3 paginates.
+    """
+    open_hc_n = _norm_match_str(open_hc)
+    open_ou_n = _norm_match_str(open_ou)
+
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("""
+        # Candidates with their first-ever snapshot per match.
+        cur.execute(
+            f"""
+            WITH first_snap AS (
+                SELECT DISTINCT ON (match_id)
+                       match_id,
+                       home_handicap AS open_hc,
+                       ou_line       AS open_ou
+                  FROM match_odds_history
+                 ORDER BY match_id, captured_at ASC
+            )
+            SELECT m.id, m.competition, m.home, m.away,
+                   m.start_time_utc, m.status, m.minute,
+                   m.home_score, m.away_score,
+                   f.open_hc, f.open_ou
+              FROM matches m
+              LEFT JOIN first_snap f ON f.match_id = m.id
+             WHERE {_EXCLUDE_COMP_SQL}
+             ORDER BY m.start_time_utc DESC
+             LIMIT 5000
+            """,
+            _EXCLUDE_COMP_PATTERNS,
+        )
+        candidates = [dict(r) for r in cur.fetchall()]
+
+        if open_hc_n is not None:
+            candidates = [c for c in candidates if _norm_match_str(c.get("open_hc")) == open_hc_n]
+        if open_ou_n is not None:
+            candidates = [c for c in candidates if _norm_match_str(c.get("open_ou")) == open_ou_n]
+
+        # Per-goal filters need the match_goals rows.
+        per_goal_active = any((ou_before_goal or {}).values()) or any((hc_after_goal or {}).values())
+        if per_goal_active and candidates:
+            ids = [c["id"] for c in candidates]
+            cur.execute(
+                """
+                SELECT match_id, goal_number, team, minute,
+                       hc_before, hc_after, ou_before, ou_after
+                  FROM match_goals
+                 WHERE match_id = ANY(%s)
+                """,
+                (ids,),
+            )
+            goals_by_match: dict[str, dict[int, dict]] = {}
+            for r in cur.fetchall():
+                goals_by_match.setdefault(r["match_id"], {})[r["goal_number"]] = dict(r)
+
+            def _match_ok(c) -> bool:
+                gs = goals_by_match.get(c["id"], {})
+                for k, want in (ou_before_goal or {}).items():
+                    wn = _norm_match_str(want)
+                    if wn is None:
+                        continue
+                    g = gs.get(int(k))
+                    if not g or _norm_match_str(g.get("ou_before")) != wn:
+                        return False
+                for k, want in (hc_after_goal or {}).items():
+                    wn = _norm_match_str(want)
+                    if wn is None:
+                        continue
+                    g = gs.get(int(k))
+                    if not g or _norm_match_str(g.get("hc_after")) != wn:
+                        return False
+                return True
+
+            candidates = [c for c in candidates if _match_ok(c)]
+        elif per_goal_active and not candidates:
+            return []
+
+        candidates = candidates[:limit]
+
+        # Attach the goal sequence to each result so the UI can render details.
+        if candidates:
+            ids = [c["id"] for c in candidates]
+            cur.execute(
+                """
+                SELECT match_id, goal_number, team, minute,
+                       hc_before, hc_after, ou_before, ou_after
+                  FROM match_goals
+                 WHERE match_id = ANY(%s)
+                 ORDER BY match_id, goal_number
+                """,
+                (ids,),
+            )
+            goals_by_match2: dict[str, list[dict]] = {}
+            for r in cur.fetchall():
+                goals_by_match2.setdefault(r["match_id"], []).append(dict(r))
+            for c in candidates:
+                c["goals"] = goals_by_match2.get(c["id"], [])
+
+    return candidates
+
+
+def get_timeline_stats(period: str = "day", target_date: Optional[str] = None) -> dict:
+    """Aggregated stats for a single date (or period anchored at NOW()).
+
+    When `target_date` is provided it MUST be YYYY-MM-DD; `period` is forced to
+    'day' in that case. Otherwise behaves as before — period in {day, month, year}.
+    Yêu cầu #6: extra metrics for the calendar/date-picker dashboard.
+    """
+    if target_date:
+        period = "day"
+        date_clause = "date_trunc('day', start_time_utc::timestamptz) = %s::date"
+        anchor_params: list = [target_date]
+    else:
+        date_clause = "date_trunc(%s, start_time_utc::timestamptz) = date_trunc(%s, NOW())"
+        anchor_params = [period, period]
+
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(f"""
             SELECT
                 COUNT(*) AS matches,
                 COUNT(*) FILTER (WHERE status = ANY(%s)) AS live,
                 COUNT(*) FILTER (WHERE status = 'FT') AS finished,
                 COUNT(DISTINCT competition) AS competitions,
-                COALESCE(SUM(home_score + away_score), 0) AS goals
+                COALESCE(SUM(home_score + away_score) FILTER (WHERE status = 'FT'), 0) AS goals,
+                COUNT(*) FILTER (WHERE status = 'FT' AND (home_score + away_score) >= 3) AS finished_3plus
             FROM matches
-            WHERE date_trunc(%s, start_time_utc::timestamptz) = date_trunc(%s, NOW())
-              AND """ + _EXCLUDE_COMP_SQL + """
-        """, [list(_LIVE_STATUSES), period, period] + _EXCLUDE_COMP_PATTERNS)
-        row = cur.fetchone()
-        return dict(row) if row else {"matches": 0, "live": 0, "finished": 0, "competitions": 0, "goals": 0}
+            WHERE {date_clause}
+              AND {_EXCLUDE_COMP_SQL}
+        """, [list(_LIVE_STATUSES)] + anchor_params + _EXCLUDE_COMP_PATTERNS)
+        agg = cur.fetchone() or {}
+
+        # Prestigious-league count + handicap-swing count for the period.
+        # Done as two cheap follow-ups rather than monster joins.
+        cur.execute(f"""
+            SELECT competition, id FROM matches
+            WHERE {date_clause} AND {_EXCLUDE_COMP_SQL}
+        """, anchor_params + _EXCLUDE_COMP_PATTERNS)
+        period_rows = cur.fetchall()
+        prestigious_count = sum(1 for r in period_rows if is_prestigious(r["competition"]))
+
+        # Handicap swing: any match whose home_handicap range exceeds 0.5 in
+        # the period. Numeric cast tolerates Asian-handicap strings like "-0.25".
+        if period_rows:
+            ids = [r["id"] for r in period_rows]
+            cur.execute("""
+                SELECT match_id,
+                       MAX(NULLIF(home_handicap, '')::numeric) -
+                       MIN(NULLIF(home_handicap, '')::numeric) AS span
+                FROM match_odds_history
+                WHERE match_id = ANY(%s)
+                  AND home_handicap ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                GROUP BY match_id
+            """, (ids,))
+            big_odds_swing_count = sum(1 for r in cur.fetchall() if r["span"] and abs(r["span"]) > 0.5)
+        else:
+            big_odds_swing_count = 0
+
+    matches = int(agg.get("matches") or 0)
+    finished = int(agg.get("finished") or 0)
+    goals = int(agg.get("goals") or 0)
+    finished_3plus = int(agg.get("finished_3plus") or 0)
+    return {
+        "matches": matches,
+        "live": int(agg.get("live") or 0),
+        "finished": finished,
+        "competitions": int(agg.get("competitions") or 0),
+        "goals": goals,
+        "avg_goals": round(goals / finished, 2) if finished else 0.0,
+        "pct_3plus": round(100.0 * finished_3plus / finished, 1) if finished else 0.0,
+        "prestigious_count": prestigious_count,
+        "big_odds_swing_count": big_odds_swing_count,
+    }
 
 
 # --- Bulk CSV import -------------------------------------------------------
@@ -817,7 +1354,9 @@ def bulk_import_csv_match(
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Insert match row if absent — leaves any existing row untouched
+        # Insert match row if absent. On conflict (re-upload, or row already
+        # written by the live collector), bump `source` to 'csv' so the row is
+        # counted under TỔNG even if its values are otherwise left in place.
         cur.execute(
             """
             INSERT INTO matches (
@@ -825,13 +1364,13 @@ def bulk_import_csv_match(
                 home_score, away_score,
                 home_handicap, home_handicap_odds, away_handicap, away_handicap_odds,
                 ou_line, over_odds, under_odds, odds_1, odds_x, odds_2,
-                raw_data, last_seen
+                raw_data, last_seen, source
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'csv'
             )
-            ON CONFLICT (id) DO NOTHING
-            RETURNING id
+            ON CONFLICT (id) DO UPDATE SET source = 'csv'
+            RETURNING (xmax = 0) AS inserted
             """,
             (
                 match_id, competition, home, away,
@@ -851,7 +1390,9 @@ def bulk_import_csv_match(
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
-        created = cur.fetchone() is not None
+        row_ret = cur.fetchone()
+        # xmax=0 → fresh insert; otherwise the ON CONFLICT branch promoted source='csv'
+        created = bool(row_ret and row_ret.get("inserted"))
 
         # Pre-fetch existing captured_at to dedupe re-uploads
         cur.execute(

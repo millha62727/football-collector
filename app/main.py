@@ -293,6 +293,32 @@ tr:hover td{background:rgba(255,255,255,.025)}
 
 /* ---- Error toast ---- */
 .toast{position:fixed;bottom:20px;right:20px;background:#3d1e20;border:1px solid var(--red);border-radius:var(--r);padding:12px 16px;color:var(--red);font-size:13px;display:none;z-index:999}
+
+/* ---- Priority highlights (Yêu cầu #4) ---- */
+.prio-1{border:2px solid #d29922;background:linear-gradient(135deg,rgba(210,153,34,.18),var(--card))}
+.prio-2{border:2px solid #f85149;background:linear-gradient(135deg,rgba(248,81,73,.14),var(--card))}
+.prio-3{border:2px solid #3fb950;background:linear-gradient(135deg,rgba(63,185,80,.14),var(--card))}
+.prio-4{border:1px solid #58a6ff;background:linear-gradient(135deg,rgba(88,166,255,.10),var(--card))}
+.prio-tag{position:absolute;top:4px;left:8px;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;opacity:.85}
+
+/* ---- Modal ---- */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9000;display:none;align-items:center;justify-content:center;padding:24px}
+.modal-bg.on{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto}
+.modal h2{font-size:17px;margin-bottom:16px;color:var(--primary)}
+.modal label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:10px 0 4px}
+.modal input[type=text],.modal input[type=number]{width:100%;padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:13px}
+.modal input:focus{outline:none;border-color:var(--primary)}
+.modal-row{display:flex;gap:10px}
+.modal-row > *{flex:1}
+.modal-check{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer}
+.modal-check input{width:auto;margin:0}
+.modal-radio{display:flex;gap:14px;margin:8px 0}
+.modal-radio label{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--text);margin:0;cursor:pointer}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid var(--border)}
+.modal-fieldset{border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;margin-top:8px}
+.modal-fieldset legend{font-size:11px;color:var(--muted);padding:0 6px;text-transform:uppercase;letter-spacing:.5px}
+.modal-status{font-size:12px;color:var(--muted);min-height:18px}
 </style>
 </head>
 <body>
@@ -310,7 +336,8 @@ tr:hover td{background:rgba(255,255,255,.025)}
     <span class="hdr-user" id="hdrUser"></span>
   </div>
   <a href="/analyzer" class="btn-sm" style="text-decoration:none;display:inline-block">🔍 Analyzer</a>
-  <a href="/data" class="btn-sm" style="text-decoration:none">📦 Dữ liệu</a>
+  <a href="/data" class="btn-sm" style="text-decoration:none">📦 Dữ liệu (Layer 3)</a>
+  <button class="btn-sm" onclick="openTelegramModal()">📨 Cài đặt Telegram</button>
   <button class="btn-sm" onclick="goDisguise()">🔄 Đổi</button>
   <form method="post" action="/logout" style="margin:0">
     <button class="btn-sm danger" type="submit">Đăng xuất</button>
@@ -337,9 +364,9 @@ tr:hover td{background:rgba(255,255,255,.025)}
     <button class="btn" id="btnForce" onclick="ctrlForce()">⚡ Fetch ngay</button>
   </div>
 
-  <!-- Stats -->
+  <!-- Stats (TỔNG = matches imported via CSV) -->
   <div class="stats">
-    <div class="stat"><div class="stat-n c-all" id="sAll">—</div><div class="stat-l">Tổng</div></div>
+    <div class="stat" title="Trận đã import qua CSV"><div class="stat-n c-all" id="sAll">—</div><div class="stat-l">Tổng (CSV)</div></div>
     <div class="stat"><div class="stat-n c-live" id="sLive">—</div><div class="stat-l">🔴 Live</div></div>
     <div class="stat"><div class="stat-n c-ht" id="sHt">—</div><div class="stat-l">⏸ HT</div></div>
     <div class="stat"><div class="stat-n c-up" id="sUp">—</div><div class="stat-l">⏱ Sắp đấu</div></div>
@@ -355,56 +382,30 @@ tr:hover td{background:rgba(255,255,255,.025)}
     <div class="grid" id="liveGrid"><p class="empty">Không có trận nào đang diễn ra</p></div>
   </div>
 
-  <!-- All matches -->
+  <!-- Highlighted matches (priority levels 1-4) -->
   <div class="sec">
     <div class="sec-hdr">
-      <span class="sec-title">📋 Tất cả trận đấu</span>
-      <span class="sec-badge" id="matchCount">0</span>
+      <span class="sec-title">⭐ Trận nổi bật (ưu tiên)</span>
+      <span class="sec-badge" id="prioCount">0</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--muted)">
+        Toàn bộ danh sách → <a href="/data" style="color:var(--primary)">/data (Layer 3)</a>
+      </span>
     </div>
-    <div class="tbar">
-      <input class="tinput" id="searchInput" type="search" placeholder="Tìm đội, giải đấu…">
-      <select class="tsel" id="statusFilter">
-        <option value="">Tất cả trạng thái</option>
-        <option value="H1">H1 (Hiệp 1)</option>
-        <option value="H2">H2 (Hiệp 2)</option>
-        <option value="HT">HT</option>
-        <option value="UPCOMING">UPCOMING</option>
-        <option value="FT">FT</option>
-      </select>
-      <select class="tsel" id="sortSelect">
-        <option value="">Mặc định</option>
-        <option value="recent_goal">Gần đây có bàn</option>
-        <option value="high_goals">&gt;3 bàn thắng</option>
-        <option value="major">Giải lớn</option>
-        <option value="pinned">Ghim ★</option>
-      </select>
-    </div>
-    <div class="twrap">
-      <table>
-        <thead>
-          <tr>
-            <th style="width:28px"></th>
-            <th>Giải đấu</th><th>Đội nhà</th><th>Đội khách</th>
-            <th style="text-align:center">Tỷ số</th><th>Trạng thái</th><th>Phút</th>
-            <th>Tài xỉu</th><th>Kèo chấp</th><th>1X2</th><th>Giờ (GMT+7)</th><th></th>
-          </tr>
-        </thead>
-        <tbody id="matchesTbody"></tbody>
-      </table>
-    </div>
+    <div class="grid" id="prioGrid"><p class="empty">Không có trận nào đạt ngưỡng ưu tiên</p></div>
   </div>
 
-  <!-- Timeline stats -->
+  <!-- Timeline stats (date-picker) -->
   <div class="sec">
     <div class="sec-hdr">
       <span class="sec-title">📅 Thống kê hệ thống</span>
-      <div style="margin-left:auto;display:flex;gap:6px">
-        <button class="btn-sm" id="btnStatsDay" onclick="setStatsPeriod('day')">Hôm nay</button>
-        <button class="btn-sm" id="btnStatsMonth" onclick="setStatsPeriod('month')">Tháng này</button>
-        <button class="btn-sm" id="btnStatsYear" onclick="setStatsPeriod('year')">Năm nay</button>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+        <button class="btn-sm" onclick="shiftStatsDate(-1)">◀</button>
+        <input type="date" id="statsDate" class="tsel" style="font-size:12px;padding:4px 8px">
+        <button class="btn-sm" onclick="shiftStatsDate(+1)">▶</button>
+        <button class="btn-sm" onclick="setStatsToToday()" style="margin-left:6px">Hôm nay</button>
       </div>
     </div>
-    <div id="statsTimeline" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px"></div>
+    <div id="statsTimeline" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px"></div>
   </div>
 
   <!-- System logs -->
@@ -422,15 +423,53 @@ tr:hover td{background:rgba(255,255,255,.025)}
 
 <div class="toast" id="toast"></div>
 
+<!-- Telegram Setting modal — Yêu cầu #7 -->
+<div class="modal-bg" id="tgModal" onclick="if(event.target===this)closeTelegramModal()">
+  <div class="modal">
+    <h2>📨 Cài đặt thông báo Telegram</h2>
+    <label>Trận áp dụng</label>
+    <div class="modal-radio">
+      <label><input type="radio" name="tgScope" value="prestigious"> Chỉ giải uy tín</label>
+      <label><input type="radio" name="tgScope" value="all"> Tất cả giải</label>
+    </div>
+
+    <fieldset class="modal-fieldset">
+      <legend>Điều kiện kích hoạt</legend>
+      <div class="modal-row">
+        <div><label>Bàn thắng thứ</label><input type="number" id="tgGoal" min="1" max="20"></div>
+        <div><label>Trước phút</label><input type="number" id="tgMin" min="1" max="120"></div>
+      </div>
+    </fieldset>
+
+    <fieldset class="modal-fieldset">
+      <legend>Nội dung báo cáo</legend>
+      <label class="modal-check"><input type="checkbox" id="tgIncName"> Tên trận</label>
+      <label class="modal-check"><input type="checkbox" id="tgIncComp"> Tên giải</label>
+      <label class="modal-check"><input type="checkbox" id="tgIncG1"> Bàn 1 — (HC trước→sau · OU trước→sau · phút)</label>
+      <label class="modal-check"><input type="checkbox" id="tgIncG2"> Bàn 2</label>
+      <label class="modal-check"><input type="checkbox" id="tgIncG3"> Bàn 3</label>
+      <label class="modal-check"><input type="checkbox" id="tgIncG4"> Bàn 4</label>
+    </fieldset>
+
+    <label>Chat ID (phân cách dấu phẩy, để trống dùng .env)</label>
+    <input type="text" id="tgChats" placeholder="123456789,987654321">
+
+    <div class="modal-status" id="tgStatus"></div>
+
+    <div class="modal-actions">
+      <button class="btn-sm" onclick="testTelegram()">Gửi thử</button>
+      <button class="btn-sm" onclick="closeTelegramModal()">Đóng</button>
+      <button class="btn-sm" style="background:var(--pdim);color:var(--primary);border-color:var(--primary)" onclick="saveTelegramSettings()">💾 Đổi & lưu</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ------------------------------------------------------------------ state
 let allMatches = [];
-let searchQ = '';
-let statusF = '';
-let sortMode = '';
 let localLogs = [];
 let currentUser = '';
-let statsPeriod = 'day';
+let statsDate = ''; // YYYY-MM-DD; '' = let the picker pick today on init
 
 // ------------------------------------------------------------------ pin system
 const PINNED_KEY = 'fbc_pinned';
@@ -441,7 +480,7 @@ function togglePin(id, ev) {
   const p = getPinned();
   if (p.has(id)) p.delete(id); else p.add(id);
   savePinned(p);
-  renderLive(); renderTable();
+  renderLive(); renderPriority();
 }
 
 // ------------------------------------------------------------------ utils
@@ -523,9 +562,9 @@ async function pollStatus() {
   document.getElementById('ctrlErr').textContent   = c.error_count;
   document.getElementById('ctrlSaved').textContent = c.session_saved;
 
-  // Stats
+  // Stats — TỔNG = CSV-imported matches (Yêu cầu #1)
   const s = data.stats;
-  document.getElementById('sAll').textContent  = s.total;
+  document.getElementById('sAll').textContent  = (s.csv_total != null ? s.csv_total : s.total);
   document.getElementById('sLive').textContent = s.live;
   document.getElementById('sHt').textContent   = s.ht;
   document.getElementById('sUp').textContent   = s.upcoming;
@@ -545,105 +584,57 @@ async function pollMatches() {
   if (!data) return;
   allMatches = data;
   renderLive();
-  renderTable();
+  renderPriority();
 }
 
 // ------------------------------------------------------------------ render live cards
-function renderLive() {
+function renderMatchCard(m, prefix){
   const pinned = getPinned();
-  let live = allMatches.filter(m => isLive(m.status));
-  document.getElementById('liveCount').textContent = live.length;
-  const el = document.getElementById('liveGrid');
-  if (!live.length) {
-    el.innerHTML = '<p class="empty">Không có trận nào đang diễn ra</p>';
-    return;
-  }
-  // Sort pinned to top
-  if (sortMode === 'pinned') {
-    live = [...live].sort((a, b) => (pinned.has(b.id)?1:0) - (pinned.has(a.id)?1:0));
-  }
-  el.innerHTML = live.map(m => {
-    const cls = m.status === 'HT' ? 'ht' : 'live';
-    const min = m.status === 'HT' ? 'HT' : (m.minute ? m.minute + "'" : "0'");
-    const ou  = m.ou_line   ? '<div class="chip">OU <b>' + m.ou_line + '</b> O' + (m.over_odds||'?') + ' U' + (m.under_odds||'?') + '</div>' : '';
-    const hc  = m.home_handicap ? '<div class="chip">HC <b>' + m.home_handicap + '</b> ' + (m.home_handicap_odds||'?') + ' / <b>' + m.away_handicap + '</b> ' + (m.away_handicap_odds||'?') + '</div>' : '';
-    const x2  = m.odds_1 ? '<div class="chip">1X2 <b>' + m.odds_1 + '</b> ' + (m.odds_x||'?') + ' <b>' + m.odds_2 + '</b></div>' : '';
-    const href = '/match/' + encodeURIComponent(m.id);
-    const aHref = '/analyzer?match_id=' + encodeURIComponent(m.id);
-    const isPinned = pinned.has(m.id);
-    const pinBtn = '<button onclick="togglePin(' + JSON.stringify(m.id) + ',event)" style="position:absolute;top:8px;right:8px;background:none;border:none;cursor:pointer;font-size:14px;opacity:' + (isPinned?'1':'.35') + ';padding:2px">' + (isPinned?'⭐':'☆') + '</button>';
-    return '<div class="mcard ' + cls + '" style="position:relative">' +
-      pinBtn +
-      '<a href="' + href + '" style="text-decoration:none;color:inherit;display:block">' +
-      '<div class="mcomp">' + m.competition + '</div>' +
-      '<div class="mteams"><div class="mteam">' + m.home + '</div>' +
-      '<div class="mscore">' + m.home_score + ' - ' + m.away_score + '</div>' +
-      '<div class="mteam away">' + m.away + '</div></div>' +
-      '<div class="minfo"><span>' + fmt(m.start_time_utc) + '</span><span class="mmin">' + min + '</span></div>' +
-      '<div class="modds">' + ou + hc + x2 + '</div>' +
-      '</a>' +
-      '<a href="' + aHref + '" style="display:block;text-align:center;padding:5px;font-size:11px;font-weight:700;color:var(--primary);border-top:1px solid var(--border);text-decoration:none;background:rgba(88,166,255,.05)">🔍 Phân tích</a>' +
-      '</div>';
-  }).join('');
+  const cls = m.status === 'HT' ? 'ht' : (isLive(m.status) ? 'live' : '');
+  const min = m.status === 'HT' ? 'HT' : (m.minute ? m.minute + "'" : (m.status==='FT' ? 'FT' : "0'"));
+  const ou  = m.ou_line   ? '<div class="chip">OU <b>' + m.ou_line + '</b></div>' : '';
+  const hc  = m.home_handicap ? '<div class="chip">HC <b>' + m.home_handicap + '</b></div>' : '';
+  const x2  = m.odds_1 ? '<div class="chip">1X2 <b>' + m.odds_1 + '</b> ' + (m.odds_x||'?') + ' <b>' + m.odds_2 + '</b></div>' : '';
+  const href = '/match/' + encodeURIComponent(m.id);
+  const aHref = '/analyzer?match_id=' + encodeURIComponent(m.id);
+  const isPinned = pinned.has(m.id);
+  const pinBtn = '<button onclick="togglePin(' + JSON.stringify(m.id) + ',event)" style="position:absolute;top:8px;right:8px;background:none;border:none;cursor:pointer;font-size:14px;opacity:' + (isPinned?'1':'.35') + ';padding:2px;z-index:2">' + (isPinned?'⭐':'☆') + '</button>';
+  const prio = m.priority_level || 5;
+  const prioCls = (prio <= 4) ? ('prio-' + prio) : '';
+  const prioTag = (prio <= 4) ? ('<span class="prio-tag" style="color:'+(prio===1?'#d29922':prio===2?'#f85149':prio===3?'#3fb950':'#58a6ff')+'">★ P'+prio+'</span>') : '';
+  return '<div class="mcard ' + cls + ' ' + prioCls + '" style="position:relative" data-prio="'+prio+'">' +
+    prioTag + pinBtn +
+    '<a href="' + href + '" style="text-decoration:none;color:inherit;display:block;padding-top:'+(prio<=4?'12px':'0')+'">' +
+    '<div class="mcomp">' + m.competition + '</div>' +
+    '<div class="mteams"><div class="mteam">' + m.home + '</div>' +
+    '<div class="mscore">' + (m.home_score||0) + ' - ' + (m.away_score||0) + '</div>' +
+    '<div class="mteam away">' + m.away + '</div></div>' +
+    '<div class="minfo"><span>' + fmt(m.start_time_utc) + '</span><span class="mmin">' + min + '</span></div>' +
+    '<div class="modds">' + ou + hc + x2 + '</div>' +
+    '</a>' +
+    '<a href="' + aHref + '" style="display:block;text-align:center;padding:5px;font-size:11px;font-weight:700;color:var(--primary);border-top:1px solid var(--border);text-decoration:none;background:rgba(88,166,255,.05)">🔍 Phân tích</a>' +
+    '</div>';
 }
 
-// ------------------------------------------------------------------ render table
-const MAJOR_LEAGUES = ["Premier","Liga","Bundesliga","Serie","Ligue","Champions","Europa","V.League","MLS","Eredivisie","Primeira"];
-function renderTable() {
-  const pinned = getPinned();
-  let rows = allMatches;
-  if (statusF) rows = rows.filter(m => m.status === statusF);
-  if (searchQ) {
-    const q = searchQ.toLowerCase();
-    rows = rows.filter(m =>
-      m.home.toLowerCase().includes(q) ||
-      m.away.toLowerCase().includes(q) ||
-      m.competition.toLowerCase().includes(q)
-    );
-  }
-  // Sort / filter by sortMode
-  if (sortMode === 'recent_goal') {
-    rows = [...rows].sort((a,b) => ((b.home_score+b.away_score)-(a.home_score+a.away_score)) || (isLive(a.status)?-1:isLive(b.status)?1:0));
-  } else if (sortMode === 'high_goals') {
-    rows = rows.filter(m => (m.home_score||0)+(m.away_score||0) > 3);
-  } else if (sortMode === 'major') {
-    rows = rows.filter(m => MAJOR_LEAGUES.some(l => (m.competition||'').includes(l)));
-  } else if (sortMode === 'pinned') {
-    rows = [...rows].sort((a,b) => (pinned.has(b.id)?1:0) - (pinned.has(a.id)?1:0));
-  }
-  // Always bubble pinned to top regardless of sort mode
-  if (sortMode !== 'pinned') {
-    rows = [...rows.filter(m => pinned.has(m.id)), ...rows.filter(m => !pinned.has(m.id))];
-  }
-  document.getElementById('matchCount').textContent = rows.length;
-  const tbody = document.getElementById('matchesTbody');
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="12" class="empty">Không có kết quả</td></tr>';
-    return;
-  }
-  tbody.innerHTML = rows.map(m => {
-    const min = m.status === 'HT' ? 'HT' : (m.minute ? m.minute + "'" : '—');
-    const ou  = m.ou_line ? m.ou_line + ' O' + (m.over_odds||'?') + '/U' + (m.under_odds||'?') : '—';
-    const hc  = m.home_handicap ? m.home_handicap + '/' + (m.home_handicap_odds||'?') : '—';
-    const x2  = m.odds_1 ? m.odds_1 + '/' + (m.odds_x||'?') + '/' + m.odds_2 : '—';
-    const href = '/match/' + encodeURIComponent(m.id);
-    const isPinned = pinned.has(m.id);
-    const pinTd = '<td style="padding:0;text-align:center"><button onclick="togglePin(' + JSON.stringify(m.id) + ',event)" style="background:none;border:none;cursor:pointer;font-size:13px;opacity:' + (isPinned?'1':'.3') + ';padding:4px">' + (isPinned?'⭐':'☆') + '</button></td>';
-    return '<tr style="cursor:pointer" onclick="location.href=\\'' + href + '\\'">' +
-      pinTd +
-      '<td title="' + m.competition + '">' + m.competition.substring(0,30) + '</td>' +
-      '<td><b>' + m.home + '</b></td>' +
-      '<td><b>' + m.away + '</b></td>' +
-      '<td style="text-align:center;font-weight:700">' + m.home_score + ' - ' + m.away_score + '</td>' +
-      '<td>' + badge(m.status) + '</td>' +
-      '<td>' + min + '</td>' +
-      '<td style="color:var(--muted)">' + ou + '</td>' +
-      '<td style="color:var(--muted)">' + hc + '</td>' +
-      '<td style="color:var(--muted)">' + x2 + '</td>' +
-      '<td style="color:var(--muted)">' + fmt(m.start_time_utc) + '</td>' +
-      '<td><a href="/analyzer?match_id=' + encodeURIComponent(m.id) + '" style="color:var(--primary);font-size:11px;font-weight:700;text-decoration:none">🔍</a></td>' +
-      '</tr>';
-  }).join('');
+function renderLive() {
+  let live = allMatches.filter(m => isLive(m.status));
+  // Sort by priority (1..5), then start time desc
+  live.sort((a,b) => (a.priority_level||5) - (b.priority_level||5) || new Date(b.start_time_utc) - new Date(a.start_time_utc));
+  document.getElementById('liveCount').textContent = live.length;
+  const el = document.getElementById('liveGrid');
+  if (!live.length) { el.innerHTML = '<p class="empty">Không có trận nào đang diễn ra</p>'; return; }
+  el.innerHTML = live.map(m => renderMatchCard(m, 'live')).join('');
+}
+
+function renderPriority() {
+  // All non-live priority 1-4 matches (live ones already shown above). Capped at 30.
+  let prio = allMatches.filter(m => (m.priority_level||5) <= 4 && !isLive(m.status));
+  prio.sort((a,b) => (a.priority_level||5) - (b.priority_level||5) || new Date(b.start_time_utc) - new Date(a.start_time_utc));
+  prio = prio.slice(0, 30);
+  document.getElementById('prioCount').textContent = prio.length;
+  const el = document.getElementById('prioGrid');
+  if (!prio.length) { el.innerHTML = '<p class="empty">Không có trận nào đạt ngưỡng ưu tiên — xem đầy đủ ở <a href="/data" style="color:var(--primary)">/data</a></p>'; return; }
+  el.innerHTML = prio.map(m => renderMatchCard(m, 'prio')).join('');
 }
 
 // ------------------------------------------------------------------ render logs
@@ -675,34 +666,85 @@ async function ctrlForce() {
   if (r) { showToast('Đang fetch dữ liệu ngay…'); setTimeout(pollMatches, 2000); }
 }
 
-// ------------------------------------------------------------------ timeline stats
-function setStatsPeriod(p) { statsPeriod = p; pollTimeline(); }
+// ------------------------------------------------------------------ timeline stats (date-picker)
+function isoToday(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function setStatsToToday(){ statsDate = isoToday(); document.getElementById('statsDate').value = statsDate; pollTimeline(); }
+function shiftStatsDate(days){
+  const cur = statsDate || isoToday();
+  const d = new Date(cur+'T00:00:00');
+  d.setDate(d.getDate()+days);
+  statsDate = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  document.getElementById('statsDate').value = statsDate;
+  pollTimeline();
+}
 async function pollTimeline() {
-  const data = await apiFetch('/api/stats/timeline?period=' + statsPeriod);
+  if (!statsDate) statsDate = isoToday();
+  const url = '/api/stats/timeline?date=' + encodeURIComponent(statsDate);
+  const data = await apiFetch(url);
   if (!data) return;
   const el = document.getElementById('statsTimeline');
   if (!el) return;
   el.innerHTML = [
     {n: data.matches, l:'Trận đấu', c:'c-all'},
-    {n: data.goals, l:'Bàn thắng', c:'c-live'},
+    {n: data.goals, l:'Tổng bàn', c:'c-live'},
+    {n: data.avg_goals, l:'TB bàn/trận', c:'c-live'},
+    {n: (data.pct_3plus!=null?data.pct_3plus+'%':'—'), l:'≥3 bàn', c:'c-up'},
     {n: data.live, l:'Đang live', c:'c-live'},
     {n: data.finished, l:'Kết thúc', c:'c-ft'},
     {n: data.competitions, l:'Giải đấu', c:'c-ht'},
+    {n: data.prestigious_count, l:'Giải uy tín', c:'c-up'},
+    {n: data.big_odds_swing_count, l:'Kèo biến động lớn', c:'c-ht'},
   ].map(s=>'<div class="stat"><div class="stat-n '+s.c+'">'+(s.n!=null?s.n:'—')+'</div><div class="stat-l">'+s.l+'</div></div>').join('');
 }
 
-// ------------------------------------------------------------------ filters
-document.getElementById('searchInput').addEventListener('input', e => {
-  searchQ = e.target.value; renderTable();
-});
-document.getElementById('statusFilter').addEventListener('change', e => {
-  statusF = e.target.value; renderTable();
-});
-document.getElementById('sortSelect').addEventListener('change', e => {
-  sortMode = e.target.value; renderTable(); renderLive();
-});
+// ------------------------------------------------------------------ Telegram modal
+async function openTelegramModal(){
+  const m = await apiFetch('/api/telegram/settings'); if (!m) return;
+  document.querySelector('input[name=tgScope][value="'+m.scope+'"]').checked = true;
+  document.getElementById('tgGoal').value = m.goal_threshold;
+  document.getElementById('tgMin').value  = m.before_minute;
+  document.getElementById('tgIncName').checked = !!m.include_match_name;
+  document.getElementById('tgIncComp').checked = !!m.include_competition;
+  document.getElementById('tgIncG1').checked = !!m.include_goal_1;
+  document.getElementById('tgIncG2').checked = !!m.include_goal_2;
+  document.getElementById('tgIncG3').checked = !!m.include_goal_3;
+  document.getElementById('tgIncG4').checked = !!m.include_goal_4;
+  document.getElementById('tgChats').value = m.chat_ids || '';
+  document.getElementById('tgStatus').textContent = '';
+  document.getElementById('tgModal').classList.add('on');
+}
+function closeTelegramModal(){ document.getElementById('tgModal').classList.remove('on'); }
+async function saveTelegramSettings(){
+  const payload = {
+    scope: (document.querySelector('input[name=tgScope]:checked')||{}).value || 'prestigious',
+    goal_threshold: parseInt(document.getElementById('tgGoal').value || '3', 10),
+    before_minute:  parseInt(document.getElementById('tgMin').value  || '75', 10),
+    include_match_name:  document.getElementById('tgIncName').checked,
+    include_competition: document.getElementById('tgIncComp').checked,
+    include_goal_1: document.getElementById('tgIncG1').checked,
+    include_goal_2: document.getElementById('tgIncG2').checked,
+    include_goal_3: document.getElementById('tgIncG3').checked,
+    include_goal_4: document.getElementById('tgIncG4').checked,
+    chat_ids: document.getElementById('tgChats').value.trim(),
+  };
+  const r = await fetch('/api/telegram/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  if (!r || !r.ok) { document.getElementById('tgStatus').textContent = 'Lỗi lưu cấu hình'; return; }
+  document.getElementById('tgStatus').textContent = 'Đã lưu. Phiên sẽ bị khoá để xác thực lại.';
+  // Yêu cầu #12 — force re-auth via the existing idle-lock OTP flow.
+  setTimeout(() => {
+    closeTelegramModal();
+    if (typeof window.showLock === 'function') window.showLock();
+  }, 500);
+}
+async function testTelegram(){
+  const r = await apiFetch('/api/telegram/test', {method:'POST'});
+  const el = document.getElementById('tgStatus');
+  if (!r) { el.textContent = 'Không gửi được tin thử.'; return; }
+  el.textContent = r.ok ? ('Đã gửi ' + (r.sent||0) + '/' + (r.total||0) + ' chat.') : ('Lỗi: ' + (r.error||''));
+}
 
 // ------------------------------------------------------------------ init
+setStatsToToday();
 pollStatus();
 pollMatches();
 pollTimeline();
@@ -829,6 +871,21 @@ function fmtTime(utcStr){
     timeZone:'Asia/Ho_Chi_Minh'
   });
 }
+// In-half time: 1H:24, HT, 2H:10, FT — Yêu cầu #2
+function fmtInHalf(r){
+  if(!r) return '—';
+  const s = (r.status||'').toUpperCase();
+  const m = r.minute;
+  if (s === 'FT') return 'FT';
+  if (s === 'HT') return 'HT';
+  if (s === 'INJURY_TIME_H1') return '1H:45+';
+  if (s === 'INJURY_TIME_H2') return '2H:90+';
+  if (s === 'H1') return '1H:' + (m != null ? m : '');
+  if (s === 'H2') return '2H:' + (m != null ? m : '');
+  if (s === 'LIVE' && m != null) return (m <= 45 ? '1H:' : '2H:') + m;
+  if (s === 'UPCOMING' || m == null) return '—';
+  return s;
+}
 function badge(s){
   const live=['LIVE','H1','H2','INJURY_TIME_H1','INJURY_TIME_H2'];
   if(live.includes(s)) return '<span class="badge b-live">'+s+'</span>';
@@ -912,7 +969,7 @@ function renderOddsHistory(rows){
     return html;
   }
   html += '<div class="twrap"><table><thead><tr>'+
-    '<th>Thời gian</th>'+
+    '<th>Thời gian (hiệp)</th>'+
     '<th>HC nhà</th><th>HC khách</th>'+
     '<th>OU</th><th>Over</th><th>Under</th>'+
     '<th>1</th><th>X</th><th>2</th>'+
@@ -921,7 +978,7 @@ function renderOddsHistory(rows){
     const r=rows[i];
     const p=i>0?rows[i-1]:null;
     html += '<tr>'+
-      '<td style="color:var(--muted)">'+fmtTime(r.captured_at)+'</td>'+
+      '<td style="color:var(--muted)">'+fmtInHalf(r)+'</td>'+
       '<td>'+escHtml(fmtCell(r.home_handicap))+' <span class="'+(p?diff(r.home_handicap_odds,p.home_handicap_odds):'').trim()+'">@'+fmtCell(r.home_handicap_odds)+'</span></td>'+
       '<td>'+escHtml(fmtCell(r.away_handicap))+' <span class="'+(p?diff(r.away_handicap_odds,p.away_handicap_odds):'').trim()+'">@'+fmtCell(r.away_handicap_odds)+'</span></td>'+
       '<td>'+escHtml(fmtCell(r.ou_line))+'</td>'+
@@ -1144,6 +1201,45 @@ table.ot tr:hover td{background:rgba(255,255,255,.02)}
 .btn-green:hover{background:var(--green);color:#000}
 .empty{color:var(--muted);text-align:center;padding:48px;font-size:13px}
 .toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 16px;font-size:12px;display:none;z-index:200}
+
+/* ---- Advanced search panel (Yêu cầu #8) ---- */
+.adv-panel{padding:10px 12px;border-bottom:1px solid var(--border);background:rgba(88,166,255,.03)}
+.adv-toggle{display:flex;align-items:center;cursor:pointer;font-size:12px;font-weight:600;color:var(--primary);user-select:none}
+.adv-toggle::before{content:'▶';margin-right:6px;transition:transform .15s;display:inline-block}
+.adv-panel[data-open] .adv-toggle::before{transform:rotate(90deg)}
+.adv-body{display:none;margin-top:10px}
+.adv-panel[data-open] .adv-body{display:block}
+.adv-row{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+.adv-row label{font-size:11px;color:var(--muted);flex:0 0 70px}
+.adv-row input{flex:1;padding:5px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:12px}
+.adv-row input:focus{outline:none;border-color:var(--primary)}
+.adv-sub{margin:6px 0 4px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+.adv-actions{display:flex;gap:6px;margin-top:8px}
+.adv-actions button{flex:1}
+
+/* ---- Sortable result table ---- */
+.rtable{width:100%;border-collapse:collapse;font-size:11px;background:var(--card)}
+.rtable th{padding:8px 10px;background:var(--surface);text-align:left;font-size:10px;text-transform:uppercase;color:var(--muted);cursor:pointer;user-select:none;border-bottom:1px solid var(--border)}
+.rtable th:hover{color:var(--primary)}
+.rtable th .sortar{font-size:9px;margin-left:4px;opacity:.5}
+.rtable th.sort-asc .sortar,.rtable th.sort-desc .sortar{opacity:1;color:var(--primary)}
+.rtable td{padding:7px 10px;border-bottom:1px solid #1a1f26;white-space:nowrap}
+.rtable tr.expanded{background:rgba(88,166,255,.04)}
+.rtable tr.row-prio-1{background:linear-gradient(90deg,rgba(210,153,34,.12),transparent)}
+.rtable tr.row-prio-2{background:linear-gradient(90deg,rgba(248,81,73,.10),transparent)}
+.rtable tr.row-prio-3{background:linear-gradient(90deg,rgba(63,185,80,.10),transparent)}
+.rtable tr.row-prio-4{background:linear-gradient(90deg,rgba(88,166,255,.08),transparent)}
+.rtable tr.row-clickable{cursor:pointer}
+.rtable tr.row-clickable:hover td{background:rgba(255,255,255,.03)}
+.results-bar{display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);font-size:12px;color:var(--muted)}
+.results-bar b{color:var(--text)}
+.results-bar .spacer{flex:1}
+
+/* ---- Scroll-sync toggle (Yêu cầu #10) ---- */
+.scroll-toggle{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--card);border:1px solid var(--border);border-radius:14px;font-size:11px;cursor:pointer;user-select:none}
+.scroll-toggle .dot{width:16px;height:16px;border-radius:50%;background:var(--border);transition:all .15s;position:relative}
+.scroll-toggle.on .dot{background:var(--primary)}
+.split-pane{max-height:calc(100vh - 200px);overflow-y:auto}
 </style>
 </head>
 <body>
@@ -1178,6 +1274,34 @@ table.ot tr:hover td{background:rgba(255,255,255,.02)}
       </div>
       <button class="btn-sm" onclick="openImportModal()" style="width:100%;margin-top:8px;border-color:var(--green);color:var(--green)">&#x1F4E5; Import CSV</button>
     </div>
+
+    <!-- Advanced filters — Yêu cầu #8 -->
+    <div class="adv-panel" id="advPanel">
+      <div class="adv-toggle" onclick="toggleAdv()">T&#xEC;m n&#xE2;ng cao (Opening / OU / HC theo b&#xE0;n)</div>
+      <div class="adv-body">
+        <div class="adv-sub">Opening</div>
+        <div class="adv-row"><label>HC opening</label><input id="advOpenHc" placeholder="vd: 0.75"></div>
+        <div class="adv-row"><label>OU opening</label><input id="advOpenOu" placeholder="vd: 2.5"></div>
+
+        <div class="adv-sub">OU tr&#x01B0;&#x1EDB;c b&#xE0;n th&#x1EAF;ng</div>
+        <div class="adv-row"><label>B&#xE0;n 1</label><input id="advOuB1" placeholder=""><label style="flex:0 0 50px">B&#xE0;n 2</label><input id="advOuB2"></div>
+        <div class="adv-row"><label>B&#xE0;n 3</label><input id="advOuB3"><label style="flex:0 0 50px">B&#xE0;n 4</label><input id="advOuB4"></div>
+        <div class="adv-row"><label>B&#xE0;n 5</label><input id="advOuB5"><label style="flex:0 0 50px">B&#xE0;n 6</label><input id="advOuB6"></div>
+        <div class="adv-row"><label>B&#xE0;n 7</label><input id="advOuB7"></div>
+
+        <div class="adv-sub">HC sau b&#xE0;n th&#x1EAF;ng</div>
+        <div class="adv-row"><label>B&#xE0;n 1</label><input id="advHcA1" placeholder=""><label style="flex:0 0 50px">B&#xE0;n 2</label><input id="advHcA2"></div>
+        <div class="adv-row"><label>B&#xE0;n 3</label><input id="advHcA3"><label style="flex:0 0 50px">B&#xE0;n 4</label><input id="advHcA4"></div>
+        <div class="adv-row"><label>B&#xE0;n 5</label><input id="advHcA5"><label style="flex:0 0 50px">B&#xE0;n 6</label><input id="advHcA6"></div>
+        <div class="adv-row"><label>B&#xE0;n 7</label><input id="advHcA7"></div>
+
+        <div class="adv-actions">
+          <button class="btn-sm" onclick="resetAdv()">Reset</button>
+          <button class="btn-sm" style="background:var(--pdim);color:var(--primary);border-color:var(--primary)" onclick="doAdvancedSearch()">&#x1F3AF; &#xC1;p d&#x1EE5;ng</button>
+        </div>
+      </div>
+    </div>
+
     <div class="slist" id="slist"><div class="smatch-empty">Nh&#x1EAD;p t&#x1EEB; kh&#xF3;a &#x111;&#x1EC3; t&#xEC;m ki&#x1EBF;m</div></div>
   </div>
   <div class="content">
@@ -1213,6 +1337,7 @@ const matches_cache = {};
 function escHtml(s){if(s==null)return '';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function fmt(utcStr){if(!utcStr)return '—';return new Date(utcStr).toLocaleString('vi-VN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'Asia/Ho_Chi_Minh'});}
 function fmtTime(utcStr){if(!utcStr)return '—';return new Date(utcStr).toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'Asia/Ho_Chi_Minh'});}
+function fmtInHalf(r){if(!r)return '—';const s=(r.status||'').toUpperCase(),m=r.minute;if(s==='FT')return 'FT';if(s==='HT')return 'HT';if(s==='INJURY_TIME_H1')return '1H:45+';if(s==='INJURY_TIME_H2')return '2H:90+';if(s==='H1')return '1H:'+(m!=null?m:'');if(s==='H2')return '2H:'+(m!=null?m:'');if(s==='LIVE'&&m!=null)return (m<=45?'1H:':'2H:')+m;if(s==='UPCOMING'||m==null)return '—';return s;}
 function badge(s){const live=['LIVE','H1','H2'];if(live.includes(s))return '<span class="badge b-live">'+s+'</span>';if(s==='HT')return '<span class="badge b-ht">HT</span>';if(s==='FT')return '<span class="badge b-ft">FT</span>';if(s==='UPCOMING')return '<span class="badge b-up">UP</span>';return '<span class="badge b-x">'+escHtml(s)+'</span>';}
 function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2800);}
 async function apiFetch(url){try{const r=await fetch(url);if(r.status===401){location.href='/login';return null;}return r.ok?r.json():null;}catch(e){showToast('L\\u1ed7i: '+e.message);return null;}}
@@ -1299,17 +1424,53 @@ async function renderSplit() {
     apiFetch('/api/matches/'+encodeURIComponent(selectedA.id)+'/odds-history'),
     apiFetch('/api/matches/'+encodeURIComponent(selectedB.id)+'/odds-history'),
   ]);
-  const html = '<div class="split">' +
-    '<div>' +
+  // Yêu cầu #10 — scroll-sync toggle. Default = independent. Persist in session.
+  const syncMode = sessionStorage.getItem('layer3_scroll') === 'sync';
+  const toggleHtml =
+    '<div class="scroll-toggle '+(syncMode?'on':'')+'" id="scrollToggle" onclick="toggleScrollSync()" title="Chuy\\u1ec3n c\\u01b0u\\u1ed9n">' +
+      '<span>'+(syncMode?'\\u21F5 Cu\\u1ed9n chung':'\\u21F4 Cu\\u1ed9n ri\\u00eang')+'</span><span class="dot"></span>' +
+    '</div>';
+  const html = '<div class="actions-bar">' + toggleHtml +
+    '<button class="btn" onclick="clearCompare()" style="margin-left:auto">&#x2715; B\\u1ecf so s\\u00e1nh</button></div>' +
+    '<div class="split">' +
+    '<div class="split-pane" id="paneA">' +
       '<div class="actions-bar"><b>'+escHtml(selectedA.home)+' vs '+escHtml(selectedA.away)+'</b>'+badge(selectedA.status)+'<a href="/api/data/matches/'+encodeURIComponent(selectedA.id)+'/csv" class="btn" download>&#x2B07; CSV</a></div>' +
       renderOddsTable(oddsA||[], selectedA.home, selectedA.away) +
     '</div>' +
-    '<div>' +
-      '<div class="actions-bar"><b>'+escHtml(selectedB.home)+' vs '+escHtml(selectedB.away)+'</b>'+badge(selectedB.status)+'<a href="/api/data/matches/'+encodeURIComponent(selectedB.id)+'/csv" class="btn" download>&#x2B07; CSV</a>' +
-      '<button class="btn" onclick="clearCompare()" style="margin-left:auto">&#x2715; B\\u1ecf so s\\u00e1nh</button></div>' +
+    '<div class="split-pane" id="paneB">' +
+      '<div class="actions-bar"><b>'+escHtml(selectedB.home)+' vs '+escHtml(selectedB.away)+'</b>'+badge(selectedB.status)+'<a href="/api/data/matches/'+encodeURIComponent(selectedB.id)+'/csv" class="btn" download>&#x2B07; CSV</a></div>' +
       renderOddsTable(oddsB||[], selectedB.home, selectedB.away) +
     '</div></div>';
   document.getElementById('contentArea').innerHTML = html;
+  if (syncMode) attachScrollSync();
+}
+
+let _scrollSyncFlag = false;
+function attachScrollSync() {
+  const a = document.getElementById('paneA'); const b = document.getElementById('paneB');
+  if (!a || !b) return;
+  const mk = (src, dst) => () => {
+    if (_scrollSyncFlag) return;
+    _scrollSyncFlag = true;
+    dst.scrollTop = src.scrollTop;
+    // Reset on next tick so the matching scroll-event-from-dst doesn't bounce back.
+    setTimeout(() => _scrollSyncFlag = false, 0);
+  };
+  a._syncHandler = mk(a, b); b._syncHandler = mk(b, a);
+  a.addEventListener('scroll', a._syncHandler); b.addEventListener('scroll', b._syncHandler);
+}
+function detachScrollSync() {
+  for (const id of ['paneA','paneB']) {
+    const el = document.getElementById(id);
+    if (el && el._syncHandler) { el.removeEventListener('scroll', el._syncHandler); el._syncHandler = null; }
+  }
+}
+function toggleScrollSync(){
+  const cur = sessionStorage.getItem('layer3_scroll') === 'sync';
+  sessionStorage.setItem('layer3_scroll', cur ? 'free' : 'sync');
+  // Re-render the split view to reattach handlers cleanly.
+  detachScrollSync();
+  if (selectedA && selectedB) renderSplit();
 }
 
 window.clearCompare = function() { selectedB=null; updateSidebarSel(); if(selectedA) renderDetail(selectedA.id,'A'); };
@@ -1320,7 +1481,7 @@ function diffCls(curr,prev,f){if(curr==null||prev==null)return '';const c=parseF
 function renderOddsTable(rows, home, away) {
   if (!rows.length) return '<div class="panel"><div class="panel-h">&#x1F4CA; Bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o</div><div style="color:var(--muted);text-align:center;padding:24px;font-size:12px">Ch\\u01b0a c\\u00f3 d\\u1eef li\\u1ec7u</div></div>';
   let h = '<div class="panel"><div class="panel-h">&#x1F4CA; Bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o <span style="font-size:11px;color:var(--muted);font-weight:400">('+rows.length+' snapshots)</span></div><div class="panel-b"><table class="ot"><thead><tr>' +
-    '<th>Th\\u1eddi gian</th><th>Score</th><th>Ph\\u00fat</th>' +
+    '<th>Hi\\u1ec7p</th><th>Score</th><th>Ph\\u00fat</th>' +
     '<th>HC '+escHtml((home||'').split(' ')[0])+'</th><th>@</th>' +
     '<th>HC '+escHtml((away||'').split(' ')[0])+'</th><th>@</th>' +
     '<th>OU</th><th>Over</th><th>Under</th>' +
@@ -1330,7 +1491,7 @@ function renderOddsTable(rows, home, away) {
     const r=rows[i], p=i>0?rows[i-1]:null;
     const score=(r.home_score!=null?r.home_score:'?')+'-'+(r.away_score!=null?r.away_score:'?');
     h+='<tr>'+
-      '<td style="color:var(--muted)">'+fmtTime(r.captured_at)+'</td>'+
+      '<td style="color:var(--muted)">'+fmtInHalf(r)+'</td>'+
       '<td style="font-weight:700;color:var(--red)">'+score+'</td>'+
       '<td style="color:var(--orange)">'+(r.minute?r.minute+"'":'\\u2014')+'</td>'+
       '<td>'+escHtml(fmtCell(r.home_handicap))+'</td>'+
@@ -1347,6 +1508,146 @@ function renderOddsTable(rows, home, away) {
   }
   h+='</tbody></table></div></div>';
   return h;
+}
+
+function toggleAdv(){
+  const p = document.getElementById('advPanel');
+  if (p.hasAttribute('data-open')) p.removeAttribute('data-open');
+  else p.setAttribute('data-open','1');
+}
+function resetAdv(){
+  ['advOpenHc','advOpenOu'].forEach(id => document.getElementById(id).value = '');
+  for (let n=1;n<=7;n++){ document.getElementById('advOuB'+n).value=''; document.getElementById('advHcA'+n).value=''; }
+}
+
+let advLastResults = [];
+let advSortField = 'start_time_utc';
+let advSortDir = 'desc';
+
+async function doAdvancedSearch(){
+  const payload = {
+    open_hc: document.getElementById('advOpenHc').value.trim() || null,
+    open_ou: document.getElementById('advOpenOu').value.trim() || null,
+    ou_before_goal: {},
+    hc_after_goal: {},
+    limit: 300,
+  };
+  for (let n=1;n<=7;n++){
+    const ou = document.getElementById('advOuB'+n).value.trim();
+    if (ou) payload.ou_before_goal[String(n)] = ou;
+    const hc = document.getElementById('advHcA'+n).value.trim();
+    if (hc) payload.hc_after_goal[String(n)] = hc;
+  }
+  const r = await fetch('/api/data/search-advanced', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  if (r.status === 401) { location.href='/login'; return; }
+  const j = await r.json();
+  advLastResults = (j && j.results) || [];
+  renderResults(j && j.elapsed_ms);
+}
+
+function priorityFor(m){
+  // Mirror compute_priority on the client for highlighting result rows.
+  const total = (m.home_score||0) + (m.away_score||0);
+  const minute = m.minute || 0;
+  if (total >= 3 && minute < 75) return (m.competition && /Champions|Premier|Liga|Bundesliga|Serie A|Ligue 1|World Cup|MLS|Eredivisie|Primeira/i.test(m.competition)) ? 1 : 2;
+  return 5;
+}
+
+function renderResults(elapsedMs){
+  // Sort first
+  const rows = [...advLastResults].sort((a,b)=>{
+    const f = advSortField; const dir = advSortDir==='asc'?1:-1;
+    let av = a[f], bv = b[f];
+    if (f === 'start_time_utc') { av = new Date(av||0).getTime(); bv = new Date(bv||0).getTime(); }
+    if (av==null) av=''; if (bv==null) bv='';
+    return av>bv?dir:av<bv?-dir:0;
+  });
+
+  let h = '<div class="results-bar">' +
+    '<span><b>'+rows.length+'</b> k\\u1ebft qu\\u1ea3</span>' +
+    (elapsedMs!=null?'<span>· '+elapsedMs+' ms</span>':'') +
+    '<span class="spacer"></span>' +
+    '<button class="btn" onclick="exportResults(\\'csv\\')">&#x2B07; CSV</button>' +
+    '<button class="btn" onclick="exportResults(\\'txt\\')">&#x2B07; TXT</button>' +
+    '</div>';
+  if (!rows.length){ document.getElementById('contentArea').innerHTML = h + '<div class="empty">Kh\\u00f4ng c\\u00f3 tr\\u1eadn n\\u00e0o kh\\u1edbp b\\u1ed9 l\\u1ecdc.</div>'; return; }
+
+  const headers = [
+    ['competition','Gi\\u1ea3i'],
+    ['home','Nh\\u00e0'],
+    ['away','Kh\\u00e1ch'],
+    ['_score','T\\u1ef7 s\\u1ed1'],
+    ['status','Tr\\u1ea1ng'],
+    ['open_hc','HC open'],
+    ['open_ou','OU open'],
+    ['start_time_utc','Th\\u1eddi gian'],
+  ];
+  h += '<table class="rtable" id="rtable"><thead><tr>' + headers.map(([f,l])=>{
+    const cls = (advSortField===f) ? (' class="sort-'+advSortDir+'"') : '';
+    return '<th'+cls+' onclick="sortResults(\\''+f+'\\')">'+l+' <span class="sortar">\\u25BE</span></th>';
+  }).join('') + '</tr></thead><tbody>';
+
+  for (const m of rows){
+    const prio = priorityFor(m);
+    const rowCls = (prio<=4 ? 'row-prio-'+prio+' ' : '') + 'row-clickable';
+    const score = (m.home_score||0)+' - '+(m.away_score||0);
+    h += '<tr class="'+rowCls+'" onclick="toggleExpand(\\''+escHtml(m.id)+'\\', this)">' +
+      '<td title="'+escHtml(m.competition||'')+'">'+escHtml((m.competition||'').substring(0,28))+'</td>' +
+      '<td>'+escHtml(m.home)+'</td>' +
+      '<td>'+escHtml(m.away)+'</td>' +
+      '<td style="text-align:center;font-weight:700">'+score+'</td>' +
+      '<td>'+badge(m.status)+'</td>' +
+      '<td>'+escHtml(m.open_hc||'\\u2014')+'</td>' +
+      '<td>'+escHtml(m.open_ou||'\\u2014')+'</td>' +
+      '<td style="color:var(--muted)">'+fmt(m.start_time_utc)+'</td>' +
+      '</tr>';
+    // Hidden expansion row (filled on first click)
+    h += '<tr id="exp-'+escHtml(m.id)+'" style="display:none"><td colspan="8" style="padding:8px 12px;background:rgba(88,166,255,.04)"></td></tr>';
+  }
+  h += '</tbody></table>';
+  document.getElementById('contentArea').innerHTML = h;
+}
+
+function sortResults(field){
+  if (advSortField === field) advSortDir = (advSortDir==='asc' ? 'desc' : 'asc');
+  else { advSortField = field; advSortDir = 'asc'; }
+  renderResults();
+}
+
+async function toggleExpand(matchId, tr){
+  const exp = document.getElementById('exp-'+matchId);
+  if (!exp) return;
+  if (exp.style.display !== 'none') { exp.style.display = 'none'; tr.classList.remove('expanded'); return; }
+  exp.style.display = '';
+  tr.classList.add('expanded');
+  const cell = exp.querySelector('td');
+  cell.innerHTML = '<div style="color:var(--muted);font-size:11px">\\u0110ang t\\u1ea3i b\\u1ea3ng bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o...</div>';
+  const odds = await apiFetch('/api/matches/'+encodeURIComponent(matchId)+'/odds-history');
+  const m = advLastResults.find(r => r.id === matchId) || {};
+  cell.innerHTML = renderOddsTable(odds||[], m.home, m.away);
+}
+
+function exportResults(kind){
+  if (!advLastResults.length){ showToast('Kh\\u00f4ng c\\u00f3 d\\u1eef li\\u1ec7u \\u0111\\u1ec3 export'); return; }
+  let body, mime, ext;
+  if (kind === 'csv') {
+    const headers = ['id','competition','home','away','home_score','away_score','status','open_hc','open_ou','start_time_utc'];
+    const esc = v => '"' + String(v==null?'':v).replace(/"/g,'""') + '"';
+    body = headers.join(',') + '\\n' + advLastResults.map(r => headers.map(h => esc(r[h])).join(',')).join('\\n');
+    mime = 'text/csv'; ext = 'csv';
+  } else {
+    body = advLastResults.map(r => {
+      const score = (r.home_score||0)+'-'+(r.away_score||0);
+      const goalsTxt = (r.goals||[]).map(g => '  #' + g.goal_number + ' (' + g.team + ', \\''+ (g.minute||'') +') HC ' + (g.hc_before||'?') + ' \\u2192 ' + (g.hc_after||'?') + ' \\u00b7 OU ' + (g.ou_before||'?') + ' \\u2192 ' + (g.ou_after||'?')).join('\\n');
+      return [r.competition, r.home + ' ' + score + ' ' + r.away, r.status, r.start_time_utc, goalsTxt].join('\\n') + '\\n';
+    }).join('\\n----\\n');
+    mime = 'text/plain'; ext = 'txt';
+  }
+  const blob = new Blob([body], {type: mime + ';charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'football_search_' + Date.now() + '.' + ext;
+  document.body.appendChild(a); a.click(); a.remove();
 }
 
 (async function(){
@@ -1814,9 +2115,86 @@ async def api_lock_config(user: str = Depends(require_auth)):
 
 
 @app.get("/api/stats/timeline")
-async def api_stats_timeline(period: str = "day", user: str = Depends(require_auth)):
+async def api_stats_timeline(
+    period: str = "day",
+    date: str = "",
+    user: str = Depends(require_auth),
+):
+    """Stats for a period (day/month/year) or a specific calendar date.
+
+    `date=YYYY-MM-DD` overrides `period` and serves the date-picker dashboard
+    (Yêu cầu #6B).
+    """
     from .database import get_timeline_stats
-    return JSONResponse(get_timeline_stats(period))
+    return JSONResponse(get_timeline_stats(period, target_date=date or None))
+
+
+# ---------------------------------------------------------------------------
+# Telegram Setting API — Yêu cầu #7
+# ---------------------------------------------------------------------------
+
+@app.get("/api/telegram/settings")
+async def api_telegram_settings_get(user: str = Depends(require_auth)):
+    from .database import get_telegram_settings
+    return JSONResponse(get_telegram_settings())
+
+
+@app.post("/api/telegram/settings")
+async def api_telegram_settings_save(payload: dict = Body(...), user: str = Depends(require_auth)):
+    from .database import update_telegram_settings
+    # Sanity-clamp the numeric thresholds before persisting.
+    if "goal_threshold" in payload:
+        try:
+            payload["goal_threshold"] = max(1, min(20, int(payload["goal_threshold"])))
+        except (TypeError, ValueError):
+            payload.pop("goal_threshold", None)
+    if "before_minute" in payload:
+        try:
+            payload["before_minute"] = max(1, min(120, int(payload["before_minute"])))
+        except (TypeError, ValueError):
+            payload.pop("before_minute", None)
+    if "scope" in payload and payload["scope"] not in ("prestigious", "all"):
+        payload.pop("scope", None)
+    out = update_telegram_settings(payload)
+    # `lock_required` cues the client to call window.showLock() — Yêu cầu #12.
+    return {"ok": True, "settings": out, "lock_required": True}
+
+
+@app.post("/api/telegram/test")
+async def api_telegram_test(user: str = Depends(require_auth)):
+    from . import telegram as tg
+    if not tg.is_configured():
+        return JSONResponse({"ok": False, "error": "Bot Telegram chưa được cấu hình"}, status_code=400)
+    result = tg.send_message("✅ <b>Test thành công</b>\nFootball Collector — Telegram Setting hoạt động.")
+    if not result.get("ok"):
+        return JSONResponse({"ok": False, "error": result.get("error") or "Không gửi được"}, status_code=502)
+    return {"ok": True, "sent": result.get("sent"), "total": result.get("total")}
+
+
+# ---------------------------------------------------------------------------
+# Layer 3 advanced search — Yêu cầu #8
+# ---------------------------------------------------------------------------
+
+@app.post("/api/data/search-advanced")
+async def api_search_advanced(payload: dict = Body(...), user: str = Depends(require_auth)):
+    from .database import advanced_search
+    open_hc = payload.get("open_hc")
+    open_ou = payload.get("open_ou")
+    ou_before_goal = payload.get("ou_before_goal") or {}
+    hc_after_goal = payload.get("hc_after_goal") or {}
+    limit = int(payload.get("limit") or 200)
+
+    import time as _t
+    t0 = _t.perf_counter()
+    rows = advanced_search(
+        open_hc=open_hc,
+        open_ou=open_ou,
+        ou_before_goal=ou_before_goal,
+        hc_after_goal=hc_after_goal,
+        limit=limit,
+    )
+    elapsed_ms = int((_t.perf_counter() - t0) * 1000)
+    return JSONResponse({"results": rows, "count": len(rows), "elapsed_ms": elapsed_ms})
 
 
 @app.get("/api/data/matches")

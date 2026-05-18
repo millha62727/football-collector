@@ -21,10 +21,26 @@ _CHAT_IDS_RAW = os.getenv("TELEGRAM_CHAT_IDS", "").strip()
 _TIMEOUT = 10
 
 
-def _chat_ids() -> list[str]:
+def _chat_ids_from_env() -> list[str]:
     if not _CHAT_IDS_RAW:
         return []
     return [c.strip() for c in _CHAT_IDS_RAW.split(",") if c.strip()]
+
+
+def _chat_ids() -> list[str]:
+    """Resolve effective chat_ids: DB settings override env, env is fallback.
+
+    Read failures fall back to env silently so the OTP path keeps working even
+    when the DB is briefly unavailable.
+    """
+    try:
+        from .database import get_telegram_settings
+        db = (get_telegram_settings().get("chat_ids") or "").strip()
+        if db:
+            return [c.strip() for c in db.split(",") if c.strip()]
+    except Exception:
+        pass
+    return _chat_ids_from_env()
 
 
 def is_configured() -> bool:
@@ -105,3 +121,49 @@ def send_unlock_otp(username: str, otp: str, ttl_seconds: int) -> dict:
         f"Hết hạn sau {ttl_seconds // 60} phút."
     )
     return send_message(text)
+
+
+def _html_escape(s) -> str:
+    return (
+        str(s if s is not None else "")
+        .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
+
+
+def send_goal_alert(match, goals: list[dict], settings: dict) -> dict:
+    """Goal-event Telegram alert. Body fields are gated by `settings.include_*`.
+
+    Yêu cầu #7. Sender is the same `send_message` pipeline used by OTPs; chat
+    targets come from `_chat_ids()` (DB-first with env fallback).
+    """
+    lines: list[str] = ["⚽️ <b>Cảnh báo trận đấu</b>"]
+    if settings.get("include_match_name", True):
+        home = _html_escape(getattr(match, "home", ""))
+        away = _html_escape(getattr(match, "away", ""))
+        score = f"{getattr(match, 'home_score', 0) or 0} - {getattr(match, 'away_score', 0) or 0}"
+        lines.append(f"<b>{home} {score} {away}</b>")
+    if settings.get("include_competition", True):
+        lines.append(f"🏆 {_html_escape(getattr(match, 'competition', ''))}")
+
+    minute = getattr(match, "minute", None)
+    if minute is not None:
+        lines.append(f"⏱ Phút {minute}")
+
+    for n in (1, 2, 3, 4):
+        if not settings.get(f"include_goal_{n}", n <= 3):
+            continue
+        g = next((x for x in goals if x.get("goal_number") == n), None)
+        if not g:
+            continue
+        hc_b = _html_escape(g.get("hc_before") or "?")
+        hc_a = _html_escape(g.get("hc_after") or "?")
+        ou_b = _html_escape(g.get("ou_before") or "?")
+        ou_a = _html_escape(g.get("ou_after") or "?")
+        gmin = g.get("minute")
+        team = g.get("team", "?")
+        lines.append(
+            f"• Bàn {n} ({team}, phút {gmin}): "
+            f"HC {hc_b} → {hc_a} · OU {ou_b} → {ou_a}"
+        )
+
+    return send_message("\n".join(lines))

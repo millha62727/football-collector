@@ -14,19 +14,27 @@ from dotenv import load_dotenv
 
 from .database import (
     clear_collector_command,
+    db_count_upcoming_within,
     get_collector_command,
     init_db,
     set_collector_state,
+    stale_finish_sweep,
     upsert_match,
 )
 from .parser import parse_match
 
 load_dotenv()
 
-API_BASE      = os.getenv("API_BASE_URL", "https://be.sb21.net/api/v2")
-TIMEOUT_S     = int(os.getenv("API_TIMEOUT", "10"))
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "30"))
-CMD_POLL_S    = 3   # how often to check for commands during sleep
+API_BASE                  = os.getenv("API_BASE_URL", "https://be.sb21.net/api/v2")
+TIMEOUT_S                 = int(os.getenv("API_TIMEOUT", "10"))
+POLL_INTERVAL             = int(os.getenv("POLL_INTERVAL", "30"))
+# Two-tier scheduling — Yêu cầu #11: if any UPCOMING kicks off within the next
+# UPCOMING_FAST_WINDOW_MIN minutes, switch to UPCOMING_FAST_INTERVAL seconds
+# between polls so we capture pre-kickoff handicap/OU drift at 1-minute fidelity.
+UPCOMING_FAST_WINDOW_MIN  = int(os.getenv("UPCOMING_FAST_WINDOW_MIN", "30"))
+UPCOMING_FAST_INTERVAL    = int(os.getenv("UPCOMING_FAST_INTERVAL", "60"))
+STALE_SWEEP_HOURS         = int(os.getenv("STALE_FT_HOURS", "6"))
+CMD_POLL_S                = 3   # how often to check for commands during sleep
 
 _SKIP_KEYWORDS = ("ảo", "virtual", "esports", "soccer battle", "điện tử")
 
@@ -115,6 +123,16 @@ async def run_collector() -> None:
                         _log(logs, "INFO", "Collector resumed")
                         break
 
+            # ---- Stale-status sweep -------------------------------------------
+            # Reclaim matches the upstream API stopped reporting hours ago and
+            # mark them FT so they stop inflating the LIVE/HT counters — Yêu cầu #3.
+            try:
+                swept = stale_finish_sweep(STALE_SWEEP_HOURS)
+                if swept:
+                    _log(logs, "INFO", f"Stale-status sweep: marked {swept} match(es) FT")
+            except Exception as exc:
+                _log(logs, "WARN", f"Stale sweep failed: {exc}")
+
             # ---- Fetch ----------------------------------------------------------
             t0 = time.time()
             loop_count += 1
@@ -188,8 +206,18 @@ async def run_collector() -> None:
                         break
                 continue
 
-            # ---- Wait POLL_INTERVAL, interruptible by force command -----------
-            deadline = time.monotonic() + POLL_INTERVAL
+            # ---- Wait, interruptible by force command -------------------------
+            # Two-tier cadence: 60s if any upcoming match within the next 30
+            # minutes; otherwise POLL_INTERVAL. Decided at the END of the loop
+            # so the next sleep already reflects the freshly persisted matches.
+            try:
+                upcoming_near = db_count_upcoming_within(UPCOMING_FAST_WINDOW_MIN)
+            except Exception:
+                upcoming_near = 0
+            next_tick = UPCOMING_FAST_INTERVAL if upcoming_near > 0 else POLL_INTERVAL
+            if upcoming_near > 0:
+                _log(logs, "INFO", f"Fast cadence: {upcoming_near} upcoming within {UPCOMING_FAST_WINDOW_MIN}m → tick {next_tick}s")
+            deadline = time.monotonic() + next_tick
             while time.monotonic() < deadline:
                 remaining = deadline - time.monotonic()
                 await asyncio.sleep(min(CMD_POLL_S, remaining))

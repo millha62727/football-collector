@@ -1109,9 +1109,63 @@ tr:hover td{background:rgba(0,194,255,.03)}
 .sym{font-weight:700;color:var(--text)}
 .bar{display:inline-block;width:80px;height:4px;background:#1e2a42;border-radius:2px;overflow:hidden;vertical-align:middle;margin-left:8px}
 .bar-fill{height:100%;background:var(--green);border-radius:2px;transition:width .5s}
+
+/* ---- Return-gate popup (subtle red/yellow) ----
+   Forces a Telegram OTP before the user can leave /market.
+   Background uses a dimmer + slight warm tint instead of pure black so
+   the decoy market UI is still visible behind. */
+.gate-bg{position:fixed;inset:0;background:radial-gradient(ellipse at center,rgba(255,180,80,.08),rgba(0,0,0,.78));backdrop-filter:blur(2px);z-index:9000;display:flex;align-items:center;justify-content:center;padding:24px}
+.gate-bg.hidden{display:none}
+.gate{position:relative;background:linear-gradient(180deg,#1a1410,#0e0a07);border:1px solid transparent;border-radius:12px;padding:0;width:100%;max-width:380px;box-shadow:0 22px 48px rgba(0,0,0,.55),0 0 0 1px rgba(255,200,90,.18)}
+.gate::before{content:'';position:absolute;inset:-1px;border-radius:13px;padding:1px;background:linear-gradient(135deg,#ff7676 0%,#ffd166 55%,#ff7676 100%);-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;opacity:.6;pointer-events:none}
+.gate-hdr{display:flex;align-items:center;gap:10px;padding:14px 18px;background:linear-gradient(90deg,rgba(255,118,118,.10),rgba(255,209,102,.10));border-bottom:1px solid rgba(255,209,102,.18);border-radius:12px 12px 0 0}
+.gate-hdr .icon{font-size:18px}
+.gate-hdr .title{font-size:13px;font-weight:700;letter-spacing:.3px;color:#ffd9a3}
+.gate-hdr .close{margin-left:auto;background:none;border:0;color:#8b6a4a;cursor:pointer;font-size:18px;line-height:1;padding:2px 6px;border-radius:4px}
+.gate-hdr .close:hover{background:rgba(255,209,102,.08);color:#ffd166}
+.gate-body{padding:18px 20px 20px}
+.gate-body p{color:#c9bca8;font-size:12.5px;line-height:1.5;margin-bottom:14px}
+.gate-body p b{color:#ffd9a3}
+.gate-row{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+.gate-otp{padding:11px 14px;background:#15110c;border:1px solid rgba(255,209,102,.22);border-radius:6px;color:#ffe1ba;font-size:20px;letter-spacing:7px;text-align:center;font-family:'SF Mono','Consolas',monospace}
+.gate-otp:focus{outline:none;border-color:#ffb454;background:#1a140d}
+.gate-otp:disabled{opacity:.45}
+.gate-btn{padding:10px 14px;border-radius:6px;border:1px solid rgba(255,209,102,.32);background:rgba(255,209,102,.10);color:#ffd9a3;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.gate-btn:hover:not(:disabled){background:rgba(255,209,102,.18);border-color:#ffd166;color:#fff2d1}
+.gate-btn:disabled{opacity:.45;cursor:not-allowed}
+.gate-btn.primary{background:linear-gradient(90deg,#ff7676,#ffb454);color:#1a0f06;border-color:transparent;font-weight:700}
+.gate-btn.primary:hover:not(:disabled){background:linear-gradient(90deg,#ff8585,#ffc275);box-shadow:0 4px 14px rgba(255,170,90,.28)}
+.gate-msg{font-size:11.5px;color:#a59078;min-height:16px;margin-top:8px}
+.gate-err{color:#ff8a8a}
+.gate-ok{color:#a8d39b}
+.gate-reopen{position:fixed;bottom:18px;right:18px;background:linear-gradient(135deg,#ff7676,#ffd166);color:#1a0f06;border:0;border-radius:50%;width:46px;height:46px;font-size:20px;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.4),0 0 0 1px rgba(255,209,102,.4);z-index:8500;display:none}
+.gate-reopen.on{display:flex;align-items:center;justify-content:center}
 </style>
 </head>
 <body>
+
+<!-- Return-gate: Telegram OTP required to leave the decoy -->
+<div class="gate-bg" id="gateBg">
+  <div class="gate">
+    <div class="gate-hdr">
+      <span class="icon">&#x1F510;</span>
+      <span class="title">X&#xE1;c th&#x1EF1;c &#x111;&#x1EC3; quay l&#x1EA1;i</span>
+      <button class="close" type="button" onclick="hideGate()" title="&#x110;&#xF3;ng t&#x1EA1;m">&times;</button>
+    </div>
+    <div class="gate-body">
+      <p>Phi&#xEA;n &#x111;ang &#x1EDF; <b>ch&#x1EBF; &#x111;&#x1ED9; decoy</b>. Nh&#x1EADp m&#xE3; OTP nh&#x1EADn qua Telegram &#x111;&#x1EC3; quay l&#x1EA1;i b&#x1EA3;ng &#x111;i&#x1EC1;u khi&#x1EC3;n.</p>
+      <div class="gate-row">
+        <button id="gateBtnReq" class="gate-btn" type="button" onclick="gateReqOtp()">G&#x1EEDi OTP qua Telegram</button>
+        <input id="gateOtp" class="gate-otp" type="text" inputmode="numeric" maxlength="6" placeholder="------" disabled onkeydown="if(event.key==='Enter')gateVerify()" autocomplete="one-time-code">
+        <button id="gateBtnVerify" class="gate-btn primary" type="button" onclick="gateVerify()" disabled>M&#x1EDF; kh&#xF3;a &amp; quay l&#x1EA1;i</button>
+      </div>
+      <div class="gate-msg" id="gateMsg">B&#x1EA5;m "G&#x1EEDi OTP" &#x111;&#x1EC3; nh&#x1EADn m&#xE3; 6 ch&#x1EEF; s&#x1ED1; qua Telegram.</div>
+    </div>
+  </div>
+</div>
+
+<button class="gate-reopen" id="gateReopen" type="button" onclick="showGate()" title="M&#x1EDF; l&#x1EA1;i x&#xE1;c th&#x1EF1;c">&#x1F510;</button>
+
 <nav class="nav">
   <div class="nav-brand">&#x2B21; CryptoWatch</div>
   <div class="nav-links">
@@ -1174,6 +1228,113 @@ function render(){
 }
 render();
 setInterval(tick,2200);
+
+// ───────────────────────────────────────────────────────────────────────
+// Return-gate: force a Telegram OTP before leaving /market.
+// Reuses the existing /api/lock/request-otp + /api/lock/verify-otp pair
+// (purpose="unlock") so we don't duplicate the bot plumbing.
+// ───────────────────────────────────────────────────────────────────────
+(function(){
+  const gateBg = document.getElementById('gateBg');
+  const reopen = document.getElementById('gateReopen');
+  const msg    = document.getElementById('gateMsg');
+  const otp    = document.getElementById('gateOtp');
+  const btnReq = document.getElementById('gateBtnReq');
+  const btnVer = document.getElementById('gateBtnVerify');
+  let otpRequested = false;
+
+  function setMsg(text, cls){
+    msg.textContent = text || '';
+    msg.className = 'gate-msg' + (cls ? ' ' + cls : '');
+  }
+
+  window.showGate = function(){
+    gateBg.classList.remove('hidden');
+    reopen.classList.remove('on');
+    setMsg('Bấm "Gửi OTP" để nhận mã 6 chữ số qua Telegram.', '');
+  };
+  window.hideGate = function(){
+    gateBg.classList.add('hidden');
+    reopen.classList.add('on');
+  };
+
+  window.gateReqOtp = async function(){
+    btnReq.disabled = true; btnReq.textContent = 'Đang gửi...';
+    setMsg('Đang gửi OTP qua Telegram...', '');
+    try {
+      const r = await fetch('/api/lock/request-otp', {method:'POST'});
+      if (r.status === 401) { location.href = '/login'; return; }
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || !j.ok) {
+        setMsg(j.error || 'Không gửi được OTP. Kiểm tra Cài đặt Telegram.', 'gate-err');
+        btnReq.disabled = false; btnReq.textContent = 'Gửi OTP qua Telegram';
+        return;
+      }
+      otpRequested = true;
+      otp.disabled = false; otp.focus();
+      btnVer.disabled = false;
+      btnReq.disabled = false; btnReq.textContent = 'Gửi lại OTP';
+      const ttl = Math.round((j.ttl_seconds||300)/60);
+      setMsg('OTP đã gửi. Hết hạn sau ' + ttl + ' phút.', 'gate-ok');
+    } catch (e) {
+      setMsg('Lỗi mạng: ' + e.message, 'gate-err');
+      btnReq.disabled = false; btnReq.textContent = 'Gửi OTP qua Telegram';
+    }
+  };
+
+  window.gateVerify = async function(){
+    if (!otpRequested) { setMsg('Hãy bấm "Gửi OTP" trước.', 'gate-err'); return; }
+    const code = (otp.value||'').trim();
+    if (!code) { setMsg('Nhập OTP', 'gate-err'); otp.focus(); return; }
+    btnVer.disabled = true;
+    setMsg('Đang xác thực...', '');
+    try {
+      const r = await fetch('/api/lock/verify-otp', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({otp: code})
+      });
+      if (r.status === 401) {
+        const j = await r.json().catch(()=>({}));
+        setMsg(j.error || 'OTP không đúng', 'gate-err');
+        otp.value = ''; otp.focus();
+        btnVer.disabled = false;
+        return;
+      }
+      const j = await r.json();
+      if (j.ok) {
+        setMsg('Mở khoá thành công, đang chuyển hướng...', 'gate-ok');
+        // Drop the sessionStorage lock so the dashboard doesn't immediately
+        // re-lock on arrival.
+        try { sessionStorage.removeItem('fbc_locked'); } catch(_){}
+        location.href = '/';
+      } else {
+        setMsg(j.error || 'OTP không đúng', 'gate-err');
+        otp.value = ''; otp.focus();
+        btnVer.disabled = false;
+      }
+    } catch (e) {
+      setMsg('Lỗi mạng: ' + e.message, 'gate-err');
+      btnVer.disabled = false;
+    }
+  };
+
+  // Re-open the gate whenever the user tries to navigate away. Pushing a
+  // sentinel history entry + listening for popstate covers Back/Forward;
+  // the X just dismisses temporarily (until next nav attempt).
+  history.pushState({m:'gate'}, '', location.href);
+  window.addEventListener('popstate', () => {
+    history.pushState({m:'gate'}, '', location.href);
+    showGate();
+  });
+  // beforeunload nudge — browsers may suppress the message but the dialog
+  // itself fires, giving the user a moment to cancel.
+  window.addEventListener('beforeunload', (e) => {
+    if (!document.querySelector('a[data-allow-leave]:focus')) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+})();
 </script>
 </body>
 </html>"""

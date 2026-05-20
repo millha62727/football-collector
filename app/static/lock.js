@@ -13,6 +13,10 @@
   const LOCK_KEY = 'fbc_locked';
   let _lockTimer = null;
   let _otpRequested = false;
+  const _debugLock = (() => {
+    try { return new URL(window.location.href).searchParams.get('debugLock') === '1'; }
+    catch (e) { return false; }
+  })();
 
   function $(id) { return document.getElementById(id); }
 
@@ -43,10 +47,35 @@
     if (el) el.style.display = 'none';
   }
 
-  function resetTimer() {
-    if (sessionStorage.getItem(LOCK_KEY)) return; // already locked, no reset
+  let _lastReset = 0;
+  let _trailingPending = false;
+  function _doReset() {
     clearTimeout(_lockTimer);
     _lockTimer = setTimeout(showLock, LOCK_TIMEOUT_MS);
+    if (_debugLock) {
+      console.log('[lock] reset @', new Date().toLocaleTimeString(),
+        '→ next lock @', new Date(Date.now() + LOCK_TIMEOUT_MS).toLocaleTimeString());
+    }
+  }
+  function resetTimer() {
+    if (sessionStorage.getItem(LOCK_KEY)) return; // already locked, no reset
+    const now = Date.now();
+    // Throttle ~250ms to absorb mousemove storms, but schedule a trailing call
+    // so the final activity in a burst still counts.
+    if (now - _lastReset < 250) {
+      if (!_trailingPending) {
+        _trailingPending = true;
+        setTimeout(() => {
+          _trailingPending = false;
+          if (sessionStorage.getItem(LOCK_KEY)) return;
+          _lastReset = Date.now();
+          _doReset();
+        }, 260);
+      }
+      return;
+    }
+    _lastReset = now;
+    _doReset();
   }
 
   window.lockRequestOtp = async function () {
@@ -125,15 +154,29 @@
     if (cfg && cfg.idle_seconds) {
       LOCK_TIMEOUT_MS = Math.max(60, cfg.idle_seconds) * 1000;
     }
+    clearTimeout(_lockTimer); // dọn timer cũ nếu activity đã set trong lúc fetch
     if (sessionStorage.getItem(LOCK_KEY)) showLock();
-    else resetTimer();
+    else _doReset();
   }).catch(() => {
+    clearTimeout(_lockTimer);
     if (sessionStorage.getItem(LOCK_KEY)) showLock();
-    else resetTimer();
+    else _doReset();
   });
 
   // Activity resets the timer.
-  ['mousemove', 'keydown', 'click', 'touchstart', 'scroll'].forEach(ev => {
-    document.addEventListener(ev, resetTimer, { passive: true });
+  // capture: true → nhận event TRƯỚC khi descendant gọi stopPropagation() (modal, input).
+  const ACTIVITY_EVENTS = [
+    'mousemove', 'mousedown', 'pointermove', 'pointerdown',
+    'keydown', 'keyup', 'click',
+    'touchstart', 'touchmove',
+    'wheel', 'scroll',
+    'input', 'change', 'focusin'
+  ];
+  ACTIVITY_EVENTS.forEach(ev => {
+    document.addEventListener(ev, resetTimer, { capture: true, passive: true });
+  });
+  window.addEventListener('scroll', resetTimer, { capture: true, passive: true });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') resetTimer();
   });
 })();

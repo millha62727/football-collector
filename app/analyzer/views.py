@@ -176,6 +176,7 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
       <span>—</span>
       <input id="pred-fa" type="number" min="0" max="99">
       <button class="btn" style="padding:4px 8px;font-size:11px" onclick="resetPred()">↺ Reset</button>
+      <button class="btn run" style="padding:4px 8px;font-size:11px" onclick="runCompute()">▶ Run</button>
     </div>
   </div>
 

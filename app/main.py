@@ -307,11 +307,8 @@ tr:hover td{background:rgba(255,255,255,.025)}
 /* ---- Error toast ---- */
 .toast{position:fixed;bottom:20px;right:20px;background:#3d1e20;border:1px solid var(--red);border-radius:var(--r);padding:12px 16px;color:var(--red);font-size:13px;display:none;z-index:999}
 
-/* ---- Priority highlights (Yêu cầu #4) ---- */
-.prio-1{border:2px solid #d29922;background:linear-gradient(135deg,rgba(210,153,34,.18),var(--card))}
-.prio-2{border:2px solid #f85149;background:linear-gradient(135deg,rgba(248,81,73,.14),var(--card))}
-.prio-3{border:2px solid #3fb950;background:linear-gradient(135deg,rgba(63,185,80,.14),var(--card))}
-.prio-4{border:1px solid #58a6ff;background:linear-gradient(135deg,rgba(88,166,255,.10),var(--card))}
+/* ---- Priority highlights — chỉ tint nhẹ + badge ★ Px góc trái ---- */
+.prio-1,.prio-2,.prio-3,.prio-4{background:rgba(255,255,255,.025)}
 .prio-tag{position:absolute;top:4px;left:8px;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;opacity:.85}
 
 /* ---- Modal ---- */
@@ -386,25 +383,16 @@ tr:hover td{background:rgba(255,255,255,.025)}
     <div class="stat"><div class="stat-n c-ft" id="sFt">—</div><div class="stat-l">✓ Kết thúc</div></div>
   </div>
 
-  <!-- Live matches -->
+  <!-- Live + priority feed (gộp 1 section, lọc stale &gt;4h, bỏ FT) -->
   <div class="sec">
     <div class="sec-hdr">
       <span class="sec-title">🔴 Đang diễn ra</span>
       <span class="sec-badge" id="liveCount">0</span>
-    </div>
-    <div class="grid" id="liveGrid"><p class="empty">Không có trận nào đang diễn ra</p></div>
-  </div>
-
-  <!-- Highlighted matches (priority levels 1-4) -->
-  <div class="sec">
-    <div class="sec-hdr">
-      <span class="sec-title">⭐ Trận nổi bật (ưu tiên)</span>
-      <span class="sec-badge" id="prioCount">0</span>
       <span style="margin-left:auto;font-size:11px;color:var(--muted)">
         Toàn bộ danh sách → <a href="/data" style="color:var(--primary)">/data (Layer 3)</a>
       </span>
     </div>
-    <div class="grid" id="prioGrid"><p class="empty">Không có trận nào đạt ngưỡng ưu tiên</p></div>
+    <div class="grid" id="liveGrid"><p class="empty">Không có trận nào đang diễn ra</p></div>
   </div>
 
   <!-- Timeline stats (date-picker) -->
@@ -600,15 +588,29 @@ async function pollMatches() {
   const data = await apiFetch('/api/matches');
   if (!data) return;
   allMatches = data;
-  renderLive();
-  renderPriority();
+  renderFeed();
+}
+
+// In-half time: 1H:31, 2H:15 (m-45), HT, INJURY_TIME_H1 -> 1H:45+, INJURY_TIME_H2 -> 2H:45+, FT
+function fmtInHalf(m){
+  const s = (m && m.status ? m.status : '').toUpperCase();
+  const mm = m ? m.minute : null;
+  if (s === 'FT') return 'FT';
+  if (s === 'HT') return 'HT';
+  if (s === 'INJURY_TIME_H1') return '1H:45+';
+  if (s === 'INJURY_TIME_H2') return '2H:45+';
+  if (s === 'H1') return '1H:' + (mm != null ? mm : '');
+  if (s === 'H2') return '2H:' + (mm != null ? Math.max(0, mm - 45) : '');
+  if (s === 'LIVE' && mm != null) return (mm <= 45 ? '1H:' + mm : '2H:' + (mm - 45));
+  if (s === 'UPCOMING' || mm == null) return '—';
+  return s;
 }
 
 // ------------------------------------------------------------------ render live cards
 function renderMatchCard(m, prefix){
   const pinned = getPinned();
   const cls = m.status === 'HT' ? 'ht' : (isLive(m.status) ? 'live' : '');
-  const min = m.status === 'HT' ? 'HT' : (m.minute ? m.minute + "'" : (m.status==='FT' ? 'FT' : "0'"));
+  const min = fmtInHalf(m);
   const ou  = m.ou_line   ? '<div class="chip">OU <b>' + m.ou_line + '</b></div>' : '';
   const hc  = m.home_handicap ? '<div class="chip">HC <b>' + m.home_handicap + '</b></div>' : '';
   const x2  = m.odds_1 ? '<div class="chip">1X2 <b>' + m.odds_1 + '</b> ' + (m.odds_x||'?') + ' <b>' + m.odds_2 + '</b></div>' : '';
@@ -633,25 +635,24 @@ function renderMatchCard(m, prefix){
     '</div>';
 }
 
-function renderLive() {
-  let live = allMatches.filter(m => isLive(m.status));
-  // Sort by priority (1..5), then start time desc
-  live.sort((a,b) => (a.priority_level||5) - (b.priority_level||5) || new Date(b.start_time_utc) - new Date(a.start_time_utc));
-  document.getElementById('liveCount').textContent = live.length;
+function renderFeed() {
+  // Gộp live + priority P1-P4 vào 1 feed. Lọc FT và stale (>4h).
+  const STALE_MS = 4 * 3600 * 1000;
+  const now = Date.now();
+  const fresh = allMatches.filter(m => {
+    if (m.status === 'FT') return false;
+    if (!m.start_time_utc) return true;
+    return (now - new Date(m.start_time_utc).getTime()) <= STALE_MS;
+  });
+  const sortKey = (a,b) => (a.priority_level||5) - (b.priority_level||5)
+                          || new Date(b.start_time_utc) - new Date(a.start_time_utc);
+  const live = fresh.filter(m => isLive(m.status)).sort(sortKey);
+  const prio = fresh.filter(m => !isLive(m.status) && (m.priority_level||5) <= 4).sort(sortKey).slice(0, 30);
+  const all = live.concat(prio);
+  document.getElementById('liveCount').textContent = all.length;
   const el = document.getElementById('liveGrid');
-  if (!live.length) { el.innerHTML = '<p class="empty">Không có trận nào đang diễn ra</p>'; return; }
-  el.innerHTML = live.map(m => renderMatchCard(m, 'live')).join('');
-}
-
-function renderPriority() {
-  // All non-live priority 1-4 matches (live ones already shown above). Capped at 30.
-  let prio = allMatches.filter(m => (m.priority_level||5) <= 4 && !isLive(m.status));
-  prio.sort((a,b) => (a.priority_level||5) - (b.priority_level||5) || new Date(b.start_time_utc) - new Date(a.start_time_utc));
-  prio = prio.slice(0, 30);
-  document.getElementById('prioCount').textContent = prio.length;
-  const el = document.getElementById('prioGrid');
-  if (!prio.length) { el.innerHTML = '<p class="empty">Không có trận nào đạt ngưỡng ưu tiên — xem đầy đủ ở <a href="/data" style="color:var(--primary)">/data</a></p>'; return; }
-  el.innerHTML = prio.map(m => renderMatchCard(m, 'prio')).join('');
+  if (!all.length) { el.innerHTML = '<p class="empty">Không có trận nào đang diễn ra</p>'; return; }
+  el.innerHTML = all.map(m => renderMatchCard(m, 'feed')).join('');
 }
 
 // ------------------------------------------------------------------ render logs
@@ -908,7 +909,7 @@ function fmtTime(utcStr){
     timeZone:'Asia/Ho_Chi_Minh'
   });
 }
-// In-half time: 1H:24, HT, 2H:10, FT — Yêu cầu #2
+// In-half time: 1H:31, 2H:15 (m-45), HT, INJURY_TIME_H2 -> 2H:45+, FT
 function fmtInHalf(r){
   if(!r) return '—';
   const s = (r.status||'').toUpperCase();
@@ -916,10 +917,10 @@ function fmtInHalf(r){
   if (s === 'FT') return 'FT';
   if (s === 'HT') return 'HT';
   if (s === 'INJURY_TIME_H1') return '1H:45+';
-  if (s === 'INJURY_TIME_H2') return '2H:90+';
+  if (s === 'INJURY_TIME_H2') return '2H:45+';
   if (s === 'H1') return '1H:' + (m != null ? m : '');
-  if (s === 'H2') return '2H:' + (m != null ? m : '');
-  if (s === 'LIVE' && m != null) return (m <= 45 ? '1H:' : '2H:') + m;
+  if (s === 'H2') return '2H:' + (m != null ? Math.max(0, m - 45) : '');
+  if (s === 'LIVE' && m != null) return (m <= 45 ? '1H:' + m : '2H:' + (m - 45));
   if (s === 'UPCOMING' || m == null) return '—';
   return s;
 }
@@ -1365,7 +1366,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .smatch-meta{color:var(--muted);font-size:11px;display:flex;gap:8px}
 .smatch-score{color:var(--red);font-weight:700}
 .smatch-empty{color:var(--muted);text-align:center;padding:24px;font-size:12px}
-.content{flex:1;overflow-y:auto;padding:16px;height:calc(100vh - 45px)}
+.content{flex:1;display:flex;flex-direction:column;padding:0;height:calc(100vh - 45px);min-width:0}
+#contentArea{flex:1;overflow-y:auto;padding:16px;min-height:0}
 .badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700}
 .b-live{background:rgba(248,81,73,.2);color:var(--red);border:1px solid rgba(248,81,73,.35)}
 .b-ft{background:rgba(63,185,80,.2);color:var(--green);border:1px solid rgba(63,185,80,.35)}
@@ -1390,20 +1392,24 @@ table.ot tr:hover td{background:rgba(255,255,255,.02)}
 .empty{color:var(--muted);text-align:center;padding:48px;font-size:13px}
 .toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 16px;font-size:12px;display:none;z-index:200}
 
-/* ---- Advanced search panel (Yêu cầu #8) ---- */
-.adv-panel{padding:10px 12px;border-bottom:1px solid var(--border);background:rgba(88,166,255,.03)}
+/* ---- Advanced search panel — đặt ở content area, grid 4 ô/hàng ---- */
+.adv-panel{flex-shrink:0;padding:10px 16px;border-bottom:1px solid var(--border);background:rgba(88,166,255,.03)}
 .adv-toggle{display:flex;align-items:center;cursor:pointer;font-size:12px;font-weight:600;color:var(--primary);user-select:none}
 .adv-toggle::before{content:'▶';margin-right:6px;transition:transform .15s;display:inline-block}
 .adv-panel[data-open] .adv-toggle::before{transform:rotate(90deg)}
 .adv-body{display:none;margin-top:10px}
 .adv-panel[data-open] .adv-body{display:block}
-.adv-row{display:flex;gap:6px;align-items:center;margin-bottom:6px}
-.adv-row label{font-size:11px;color:var(--muted);flex:0 0 70px}
-.adv-row input{flex:1;padding:5px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:12px}
-.adv-row input:focus{outline:none;border-color:var(--primary)}
-.adv-sub{margin:6px 0 4px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
-.adv-actions{display:flex;gap:6px;margin-top:8px}
-.adv-actions button{flex:1}
+.adv-opening{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.adv-twocol{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.adv-col{background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:var(--r);padding:8px 10px}
+.adv-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.adv-cell{display:flex;flex-direction:column;gap:2px;min-width:0}
+.adv-cell label{font-size:11px;color:var(--muted)}
+.adv-cell input{padding:5px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:12px;width:100%}
+.adv-cell input:focus{outline:none;border-color:var(--primary)}
+.adv-sub{margin:6px 0 6px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+.adv-actions{display:flex;gap:6px;margin-top:10px;justify-content:flex-end}
+.adv-actions button{padding:6px 16px}
 
 /* ---- Sortable result table ---- */
 .rtable{width:100%;border-collapse:collapse;font-size:11px;background:var(--card)}
@@ -1463,36 +1469,49 @@ table.ot tr:hover td{background:rgba(255,255,255,.02)}
       <button class="btn-sm" onclick="openImportModal()" style="width:100%;margin-top:8px;border-color:var(--green);color:var(--green)">&#x1F4E5; Import CSV</button>
     </div>
 
-    <!-- Advanced filters — Yêu cầu #8 -->
-    <div class="adv-panel" id="advPanel">
+    <div class="slist" id="slist"><div class="smatch-empty">Nh&#x1EAD;p t&#x1EEB; kh&#xF3;a &#x111;&#x1EC3; t&#xEC;m ki&#x1EBF;m</div></div>
+  </div>
+  <div class="content">
+    <!-- Advanced filters — chuyển sang content area, grid 4 ô/hàng -->
+    <div class="adv-panel" id="advPanel" data-open>
       <div class="adv-toggle" onclick="toggleAdv()">T&#xEC;m n&#xE2;ng cao (Opening / OU / HC theo b&#xE0;n)</div>
       <div class="adv-body">
-        <div class="adv-sub">Opening</div>
-        <div class="adv-row"><label>HC opening</label><input id="advOpenHc" placeholder="vd: 0.75"></div>
-        <div class="adv-row"><label>OU opening</label><input id="advOpenOu" placeholder="vd: 2.5"></div>
-
-        <div class="adv-sub">OU tr&#x01B0;&#x1EDB;c b&#xE0;n th&#x1EAF;ng</div>
-        <div class="adv-row"><label>B&#xE0;n 1</label><input id="advOuB1" placeholder=""><label style="flex:0 0 50px">B&#xE0;n 2</label><input id="advOuB2"></div>
-        <div class="adv-row"><label>B&#xE0;n 3</label><input id="advOuB3"><label style="flex:0 0 50px">B&#xE0;n 4</label><input id="advOuB4"></div>
-        <div class="adv-row"><label>B&#xE0;n 5</label><input id="advOuB5"><label style="flex:0 0 50px">B&#xE0;n 6</label><input id="advOuB6"></div>
-        <div class="adv-row"><label>B&#xE0;n 7</label><input id="advOuB7"></div>
-
-        <div class="adv-sub">HC sau b&#xE0;n th&#x1EAF;ng</div>
-        <div class="adv-row"><label>B&#xE0;n 1</label><input id="advHcA1" placeholder=""><label style="flex:0 0 50px">B&#xE0;n 2</label><input id="advHcA2"></div>
-        <div class="adv-row"><label>B&#xE0;n 3</label><input id="advHcA3"><label style="flex:0 0 50px">B&#xE0;n 4</label><input id="advHcA4"></div>
-        <div class="adv-row"><label>B&#xE0;n 5</label><input id="advHcA5"><label style="flex:0 0 50px">B&#xE0;n 6</label><input id="advHcA6"></div>
-        <div class="adv-row"><label>B&#xE0;n 7</label><input id="advHcA7"></div>
-
+        <div class="adv-opening">
+          <div class="adv-cell"><label>HC opening</label><input id="advOpenHc" placeholder="vd: 0.75"></div>
+          <div class="adv-cell"><label>OU opening</label><input id="advOpenOu" placeholder="vd: 2.5"></div>
+        </div>
+        <div class="adv-twocol">
+          <div class="adv-col">
+            <div class="adv-sub">OU tr&#x01B0;&#x1EDB;c b&#xE0;n th&#x1EAF;ng</div>
+            <div class="adv-grid">
+              <div class="adv-cell"><label>B&#xE0;n 1</label><input id="advOuB1"></div>
+              <div class="adv-cell"><label>B&#xE0;n 2</label><input id="advOuB2"></div>
+              <div class="adv-cell"><label>B&#xE0;n 3</label><input id="advOuB3"></div>
+              <div class="adv-cell"><label>B&#xE0;n 4</label><input id="advOuB4"></div>
+              <div class="adv-cell"><label>B&#xE0;n 5</label><input id="advOuB5"></div>
+              <div class="adv-cell"><label>B&#xE0;n 6</label><input id="advOuB6"></div>
+              <div class="adv-cell"><label>B&#xE0;n 7</label><input id="advOuB7"></div>
+            </div>
+          </div>
+          <div class="adv-col">
+            <div class="adv-sub">HC sau b&#xE0;n th&#x1EAF;ng</div>
+            <div class="adv-grid">
+              <div class="adv-cell"><label>B&#xE0;n 1</label><input id="advHcA1"></div>
+              <div class="adv-cell"><label>B&#xE0;n 2</label><input id="advHcA2"></div>
+              <div class="adv-cell"><label>B&#xE0;n 3</label><input id="advHcA3"></div>
+              <div class="adv-cell"><label>B&#xE0;n 4</label><input id="advHcA4"></div>
+              <div class="adv-cell"><label>B&#xE0;n 5</label><input id="advHcA5"></div>
+              <div class="adv-cell"><label>B&#xE0;n 6</label><input id="advHcA6"></div>
+              <div class="adv-cell"><label>B&#xE0;n 7</label><input id="advHcA7"></div>
+            </div>
+          </div>
+        </div>
         <div class="adv-actions">
           <button class="btn-sm" onclick="resetAdv()">Reset</button>
           <button class="btn-sm" style="background:var(--pdim);color:var(--primary);border-color:var(--primary)" onclick="doAdvancedSearch()">&#x1F3AF; &#xC1;p d&#x1EE5;ng</button>
         </div>
       </div>
     </div>
-
-    <div class="slist" id="slist"><div class="smatch-empty">Nh&#x1EAD;p t&#x1EEB; kh&#xF3;a &#x111;&#x1EC3; t&#xEC;m ki&#x1EBF;m</div></div>
-  </div>
-  <div class="content">
     <div id="contentArea"><div class="empty">&larr; Ch&#x1ECD;n m&#x1ED9;t tr&#x1EAD;n &#x111;&#x1EA5;u &#x111;&#x1EC3; xem chi ti&#x1EBF;t</div></div>
   </div>
 </div>

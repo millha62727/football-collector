@@ -18,6 +18,15 @@ import os
 import sys
 from datetime import datetime, timezone
 
+# When invoked as `python scripts/healthcheck_collector.py`, Python sets
+# sys.path[0] to the script's directory (/app/scripts), not the cwd (/app).
+# That makes `import app` fail with ModuleNotFoundError. Push the project
+# root onto sys.path so `from app.database import …` works regardless of
+# how the healthcheck is invoked.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 
 def _max_age_seconds() -> int:
     """Heartbeat must be newer than this many seconds, default 3 × POLL_INTERVAL."""

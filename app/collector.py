@@ -21,6 +21,7 @@ from .database import (
     set_collector_state,
     stale_finish_sweep,
     upsert_match,
+    backfill_goal_odds_after,
 )
 from .parser import parse_match
 
@@ -163,6 +164,17 @@ async def run_collector() -> None:
                     _log(logs, "INFO", f"Stale-status sweep: marked {swept} match(es) FT")
             except Exception as exc:
                 _log(logs, "WARN", f"Stale sweep failed: {exc}")
+
+            # ---- Goal-odds backfill --------------------------------------------
+            # Bookmakers suspend HC/OU around each goal, so the snapshot taken at
+            # goal-time is often NULL. Once the bookmaker re-publishes odds, this
+            # sweep populates `hc_after`/`ou_after` for goals from the last 30 min.
+            try:
+                filled = backfill_goal_odds_after(window_minutes=30)
+                if filled:
+                    _log(logs, "INFO", f"Goal-odds backfill: filled {filled} row(s)")
+            except Exception as exc:
+                _log(logs, "WARN", f"Goal-odds backfill failed: {exc}")
 
             # ---- Fetch ----------------------------------------------------------
             t0 = time.time()

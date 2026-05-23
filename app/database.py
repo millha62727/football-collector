@@ -618,6 +618,63 @@ def stale_finish_sweep(stale_after_hours: int = 6) -> int:
         return cur.rowcount
 
 
+def backfill_goal_odds_after(window_minutes: int = 30) -> int:
+    """Populate `match_goals.hc_after` / `ou_after` from history snapshots.
+
+    Bookmakers suspend odds for ~30s–2 min around each goal, so the snapshot
+    written at goal-time is often NULL. This sweep — called from the collector
+    loop — finds the first non-NULL snapshot recorded *after* `occurred_at` and
+    writes it back.
+
+    Window is intentionally narrow (30 min) so we don't waste cycles on
+    long-finished matches. Older NULLs are handled by the one-shot manual
+    backfill SQL.
+
+    Returns: number of goal rows updated.
+    """
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            WITH targets AS (
+                SELECT id, match_id, occurred_at
+                  FROM match_goals
+                 WHERE (hc_after IS NULL OR ou_after IS NULL)
+                   AND occurred_at > NOW() - (%s || ' minutes')::interval
+            ),
+            picked AS (
+                SELECT t.id,
+                       (SELECT home_handicap
+                          FROM match_odds_history h
+                         WHERE h.match_id = t.match_id
+                           AND h.captured_at > t.occurred_at
+                           AND h.home_handicap IS NOT NULL
+                         ORDER BY h.captured_at ASC
+                         LIMIT 1) AS hc_after_pick,
+                       (SELECT ou_line
+                          FROM match_odds_history h
+                         WHERE h.match_id = t.match_id
+                           AND h.captured_at > t.occurred_at
+                           AND h.ou_line IS NOT NULL
+                         ORDER BY h.captured_at ASC
+                         LIMIT 1) AS ou_after_pick
+                  FROM targets t
+            )
+            UPDATE match_goals g
+               SET hc_after = COALESCE(g.hc_after, p.hc_after_pick),
+                   ou_after = COALESCE(g.ou_after, p.ou_after_pick)
+              FROM picked p
+             WHERE g.id = p.id
+               AND (
+                     (g.hc_after IS NULL AND p.hc_after_pick IS NOT NULL)
+                  OR (g.ou_after IS NULL AND p.ou_after_pick IS NOT NULL)
+                   )
+            """,
+            [str(int(window_minutes))],
+        )
+        return cur.rowcount
+
+
 def db_count_upcoming_within(minutes: int) -> int:
     """Number of UPCOMING matches whose kickoff falls in the next `minutes`."""
     with _connect() as conn:
@@ -739,6 +796,19 @@ def _odds_changed(match: Match, prev: dict) -> bool:
     return False
 
 
+def _has_any_odds(match_or_dict) -> bool:
+    """True iff at least one of the trigger odds fields is non-NULL.
+
+    Used to (a) skip recording empty snapshots into history and (b) decide
+    whether to let an incoming poll overwrite the cached `matches` row.
+    """
+    if isinstance(match_or_dict, dict):
+        get = match_or_dict.get
+    else:
+        get = lambda k: getattr(match_or_dict, k, None)
+    return any(get(f) is not None for f in _PERSIST_TRIGGER_FIELDS)
+
+
 def _record_odds_snapshot(cur, match: Match) -> None:
     cur.execute(
         """
@@ -790,6 +860,17 @@ def upsert_match(match: Match) -> None:
             (match.id,),
         )
         prev = cur.fetchone()
+
+        # Bug guard: upstream API returns the same match in both `today` and
+        # `tomorrow` payloads (and sometimes a 2nd live-only entry that lacks
+        # odds). The 2nd write would clobber `home_handicap`/`ou_line` to NULL
+        # and trigger a noisy NULL snapshot 3ms after a valid one. Preserve
+        # last-known-good odds when the incoming poll is empty.
+        incoming_has_odds = _has_any_odds(match)
+        if not incoming_has_odds and prev is not None and _has_any_odds(prev):
+            for f in _ODDS_FIELDS:
+                if getattr(match, f) is None and prev.get(f) is not None:
+                    setattr(match, f, prev[f])
 
         cur.execute(
             """
@@ -845,10 +926,11 @@ def upsert_match(match: Match) -> None:
 
         if prev is None:
             # Record initial snapshot so from-match works immediately
-            _record_odds_snapshot(cur, match)
+            if _has_any_odds(match):
+                _record_odds_snapshot(cur, match)
             return
 
-        if _odds_changed(match, prev):
+        if _odds_changed(match, prev) and _has_any_odds(match):
             _record_odds_snapshot(cur, match)
 
         scored_home = match.home_score != prev.get("home_score")
@@ -873,13 +955,37 @@ def upsert_match(match: Match) -> None:
             _on_goal_scored(cur, match, prev, scored_home, scored_away)
 
 
+def _last_odds_before(cur, match_id: str) -> dict:
+    """Most recent odds_history snapshot with NOT NULL trigger fields.
+
+    Used to capture the `before` snapshot at goal-time. The bookmaker
+    suspends odds in a window around each goal, so we need to reach back
+    past the suspension to find a usable quote. Returns {} if no usable
+    snapshot exists yet.
+    """
+    cur.execute(
+        """
+        SELECT home_handicap, ou_line, captured_at
+          FROM match_odds_history
+         WHERE match_id = %s
+           AND (home_handicap IS NOT NULL OR ou_line IS NOT NULL)
+         ORDER BY captured_at DESC
+         LIMIT 1
+        """,
+        (match_id,),
+    )
+    row = cur.fetchone()
+    return dict(row) if row else {}
+
+
 def _on_goal_scored(cur, match: Match, prev: dict, scored_home: bool, scored_away: bool) -> None:
     """Insert match_goals row(s) + fire Telegram alert if conditions met.
 
     Drives Yêu cầu #7. Score deltas might be >1 in pathological cases (cancelled
     goal that re-scored same poll), so we iterate the delta. Per-goal HC/OU
-    "before/after" capture: 'before' = the prev row's snapshot, 'after' =
-    match.* (the just-applied state).
+    "before/after" capture: 'before' = the latest non-NULL history snapshot
+    (skips bookmaker suspensions), 'after' = NULL initially — backfilled by
+    `backfill_goal_odds_after()` once the bookmaker re-publishes odds.
     """
     team = "home" if scored_home else "away"
     # Determine current total goal_number from any prior rows for this match.
@@ -896,6 +1002,12 @@ def _on_goal_scored(cur, match: Match, prev: dict, scored_home: bool, scored_awa
     if delta < 1:  # cancellations / parser glitches — bail out cleanly
         return
 
+    # Pull the last known-good odds quote BEFORE this goal landed. Falls
+    # back to prev/match if history is empty (first-ever poll for the match).
+    before_odds = _last_odds_before(cur, match.id)
+    hc_before = before_odds.get("home_handicap") or prev.get("home_handicap") or match.home_handicap
+    ou_before = before_odds.get("ou_line") or prev.get("ou_line") or match.ou_line
+
     for _ in range(delta):
         cur.execute(
             """
@@ -909,8 +1021,7 @@ def _on_goal_scored(cur, match: Match, prev: dict, scored_home: bool, scored_awa
             (
                 match.id, next_num, team, match.minute,
                 match.home_score, match.away_score,
-                prev.get("home_handicap"), match.home_handicap,
-                prev.get("ou_line"), match.ou_line,
+                hc_before, None, ou_before, None,
             ),
         )
         next_num += 1

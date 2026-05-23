@@ -143,7 +143,7 @@ async def health():
 async def login_page(request: Request, auth_token: Optional[str] = Cookie(default=None)):
     if auth_token and decode_token(auth_token):
         return RedirectResponse("/", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(request, "login.html")
 
 
 @app.post("/api/auth/request-otp")
@@ -231,14 +231,15 @@ async def logout():
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, user: str = Depends(require_auth)):
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+    return templates.TemplateResponse(request, "dashboard.html")
 
 
 @app.get("/match/{match_id}", response_class=HTMLResponse)
 async def match_detail_page(request: Request, match_id: str, user: str = Depends(require_auth)):
     return templates.TemplateResponse(
+        request,
         "match_detail.html",
-        {"request": request, "match_id_json": json.dumps(match_id)},
+        {"match_id_json": json.dumps(match_id)},
     )
 
 
@@ -326,7 +327,7 @@ _MARKET_GATE_MAX_AGE = 60 * 60 * 24  # 24h
 
 @app.get("/market", response_class=HTMLResponse)
 async def market_page(request: Request):
-    resp = templates.TemplateResponse("market.html", {"request": request})
+    resp = templates.TemplateResponse(request, "market.html")
     resp.set_cookie(
         _MARKET_GATE_COOKIE,
         "pending",
@@ -340,7 +341,7 @@ async def market_page(request: Request):
 
 @app.get("/data", response_class=HTMLResponse)
 async def data_browser_page(request: Request, user: str = Depends(require_auth)):
-    return templates.TemplateResponse("data.html", {"request": request})
+    return templates.TemplateResponse(request, "data.html")
 
 
 @app.post("/api/lock/request-otp")

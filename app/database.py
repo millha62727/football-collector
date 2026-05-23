@@ -248,6 +248,7 @@ def get_collector_state() -> dict[str, Any]:
         "last_fetch_ms": int(kv.get("last_fetch_ms") or 0),
         "last_error": kv.get("last_error") or None,
         "api_ok": kv.get("api_ok") == "true",
+        "last_heartbeat": kv.get("last_heartbeat") or None,
         "logs": json.loads(kv.get("logs") or "[]"),
     }
 

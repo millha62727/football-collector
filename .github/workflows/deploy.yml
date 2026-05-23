@@ -20,12 +20,47 @@ jobs:
             cd football-collector
             git pull origin main
 
-            # Force-cleanup stuck app containers before redeploy.
-            # Background: `docker compose up --build` cố stop container cũ trước
-            # khi tạo container mới, nhưng đôi khi fail với "permission denied"
-            # (AppArmor/orphan state) → toàn bộ deploy fail. `rm -f` bypass
-            # graceful stop, kill thẳng. DB container giữ nguyên (có volume).
-            docker rm -f football_dashboard football_collector 2>/dev/null || true
+            # ──────────────────────────────────────────────────────────────
+            # AppArmor signal-block workaround for snap-installed Docker.
+            #
+            # Bug: snap.docker.dockerd profile blocks SIGTERM/SIGKILL between
+            # docker daemon and runc, so `docker stop` / `docker rm -f` fail
+            # with "permission denied" on previously-running containers.
+            # See: dmesg | grep apparmor.*DENIED.*signal
+            #
+            # Workaround: bypass docker daemon. Find container PID via
+            # `docker inspect`, then kill it directly from the host kernel.
+            # The runc shim notices and the container exits cleanly.
+            # ──────────────────────────────────────────────────────────────
+            cleanup_container() {
+              local name="$1"
+              local id pid
+              id=$(docker ps -a --filter "name=^${name}$" --format '{{.ID}}' | head -1)
+              [ -z "$id" ] && return 0
+
+              # Try docker rm -f first (works on a clean state).
+              if docker rm -f "$name" 2>/dev/null; then return 0; fi
+
+              # AppArmor blocked the signal. Kill PID from host.
+              pid=$(docker inspect -f '{{.State.Pid}}' "$id" 2>/dev/null || echo 0)
+              if [ "${pid:-0}" -gt 0 ]; then
+                echo "AppArmor block detected on $name — killing host PID $pid"
+                kill -9 "$pid" 2>/dev/null || true
+                sleep 2
+              fi
+              docker rm -f "$id" 2>/dev/null || true
+            }
+
+            cleanup_container football_dashboard
+            cleanup_container football_collector
+
+            # Also reap any temp orphan containers from previous failed deploys
+            # (compose names them <hash>_<service> when the rename collides).
+            for orphan in $(docker ps -a --format '{{.Names}}' \
+                            | grep -E '^[0-9a-f]+_football_(dashboard|collector)$' \
+                            || true); do
+              cleanup_container "$orphan"
+            done
 
             # Rebuild + recreate. --remove-orphans dọn container không còn trong compose.
             docker compose up -d --build --remove-orphans
@@ -33,12 +68,16 @@ jobs:
             # Dọn dangling images sau build (tránh đầy disk theo thời gian).
             docker image prune -f
 
-            # Health check: container phải Up sau 5s.
-            sleep 5
-            docker ps --filter "name=football_collector" --filter "status=running" \
-              --format '{{.Names}}' | grep -q football_collector || {
-                echo "ERROR: football_collector not running after deploy"
-                docker logs --tail 50 football_collector
-                exit 1
-              }
-            echo "Deploy OK: $(docker ps --filter 'name=football_' --format '{{.Names}}: {{.Status}}')"
+            # Health check: containers phải Up sau 10s.
+            sleep 10
+            for svc in football_collector football_dashboard; do
+              docker ps --filter "name=^${svc}$" --filter "status=running" \
+                --format '{{.Names}}' | grep -q "$svc" || {
+                  echo "ERROR: $svc not running after deploy"
+                  docker ps -a --filter "name=football_" --format 'table {{.Names}}\t{{.Status}}'
+                  docker logs --tail 50 "$svc" 2>&1 || true
+                  exit 1
+                }
+            done
+            echo "Deploy OK:"
+            docker ps --filter 'name=football_' --format 'table {{.Names}}\t{{.Status}}'

@@ -16,6 +16,29 @@ jobs:
           password: ${{ secrets.VPS_PASSWORD }}
           port: ${{ secrets.VPS_PORT }}
           script: |
+            set -e
             cd football-collector
             git pull origin main
-            docker compose up -d --build
+
+            # Force-cleanup stuck app containers before redeploy.
+            # Background: `docker compose up --build` cố stop container cũ trước
+            # khi tạo container mới, nhưng đôi khi fail với "permission denied"
+            # (AppArmor/orphan state) → toàn bộ deploy fail. `rm -f` bypass
+            # graceful stop, kill thẳng. DB container giữ nguyên (có volume).
+            docker rm -f football_dashboard football_collector 2>/dev/null || true
+
+            # Rebuild + recreate. --remove-orphans dọn container không còn trong compose.
+            docker compose up -d --build --remove-orphans
+
+            # Dọn dangling images sau build (tránh đầy disk theo thời gian).
+            docker image prune -f
+
+            # Health check: container phải Up sau 5s.
+            sleep 5
+            docker ps --filter "name=football_collector" --filter "status=running" \
+              --format '{{.Names}}' | grep -q football_collector || {
+                echo "ERROR: football_collector not running after deploy"
+                docker logs --tail 50 football_collector
+                exit 1
+              }
+            echo "Deploy OK: $(docker ps --filter 'name=football_' --format '{{.Names}}: {{.Status}}')"

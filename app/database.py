@@ -121,6 +121,23 @@ def _get_pool() -> ThreadedConnectionPool:
     return _pool
 
 
+def _reset_pool() -> None:
+    """Tear down the pool so the next _connect() rebuilds against a fresh DB.
+
+    Postgres restarts (container recreated, host reboot) leave every pooled
+    connection broken — psycopg2 surfaces them as `OperationalError` /
+    `InterfaceError`. Resetting forces a clean reconnect on the next call
+    instead of cycling through dead handles forever.
+    """
+    global _pool
+    if _pool is not None:
+        try:
+            _pool.closeall()
+        except Exception:
+            pass
+        _pool = None
+
+
 @contextmanager
 def _connect():
     conn = None
@@ -128,6 +145,17 @@ def _connect():
         conn = _get_pool().getconn()
         yield conn
         conn.commit()
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        # Connection-level failure: discard the broken handle AND the pool so
+        # subsequent callers get a fresh socket instead of more dead ones.
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = None
+        _reset_pool()
+        raise
     except Exception:
         if conn:
             conn.rollback()
@@ -135,6 +163,22 @@ def _connect():
     finally:
         if conn:
             _get_pool().putconn(conn)
+
+
+def db_ping() -> bool:
+    """Cheap reachability probe used by container healthchecks.
+
+    Returns True only on a successful round-trip. Any failure resets the pool
+    so the next attempt rebuilds connections.
+    """
+    try:
+        with _connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        return True
+    except Exception:
+        return False
 
 
 # --- Init ------------------------------------------------------------------

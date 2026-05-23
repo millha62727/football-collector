@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from .database import (
     clear_collector_command,
     db_count_upcoming_within,
+    db_ping,
     get_collector_command,
     init_db,
     set_collector_state,
@@ -35,6 +36,12 @@ UPCOMING_FAST_WINDOW_MIN  = int(os.getenv("UPCOMING_FAST_WINDOW_MIN", "30"))
 UPCOMING_FAST_INTERVAL    = int(os.getenv("UPCOMING_FAST_INTERVAL", "60"))
 STALE_SWEEP_HOURS         = int(os.getenv("STALE_FT_HOURS", "6"))
 CMD_POLL_S                = 3   # how often to check for commands during sleep
+
+# DB-init retry policy: postgres may not be ready when collector boots,
+# even with `depends_on: condition: service_healthy` (compose file edit pending).
+# Cap exponential backoff at 60s so the loop never goes silent for too long.
+DB_INIT_BACKOFF_INITIAL_S = 2
+DB_INIT_BACKOFF_MAX_S     = 60
 
 _SKIP_KEYWORDS = ("ảo", "virtual", "esports", "soccer battle", "điện tử")
 
@@ -93,13 +100,31 @@ async def run_collector() -> None:
     session_saved     = 0
     error_count       = 0
 
-    init_db()
+    # Retry init_db with exponential backoff so a slow-booting Postgres
+    # (compose `depends_on: service_healthy` only covers the first start)
+    # or a mid-life DB restart doesn't crash the container into a CrashLoop.
+    backoff = DB_INIT_BACKOFF_INITIAL_S
+    while True:
+        try:
+            init_db()
+            break
+        except Exception as exc:
+            print(
+                f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [WARN] "
+                f"init_db failed ({exc!r}); retrying in {backoff}s",
+                flush=True,
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, DB_INIT_BACKOFF_MAX_S)
+
     set_collector_state(
         running=True, paused=False,
         loop_count=0, session_saved=0, error_count=0,
         last_fetch_at="", last_fetch_ms=0, last_error="", api_ok=False,
         logs="[]",
     )
+    # Heartbeat for the docker healthcheck — see scripts/healthcheck_collector.py.
+    set_collector_state(last_heartbeat=datetime.now(timezone.utc).isoformat())
     # Clear any stale commands from a previous run
     clear_collector_command("pause")
     clear_collector_command("resume")
@@ -109,6 +134,12 @@ async def run_collector() -> None:
 
     try:
         while True:
+            # ---- Liveness heartbeat -------------------------------------------
+            # Refresh on every iteration regardless of pause/error state so the
+            # container healthcheck (scripts/healthcheck_collector.py) can tell
+            # "stuck process" from "intentionally paused" — paused still ticks.
+            set_collector_state(last_heartbeat=datetime.now(timezone.utc).isoformat())
+
             # ---- Handle pause command ----------------------------------------
             if get_collector_command("pause"):
                 clear_collector_command("pause")

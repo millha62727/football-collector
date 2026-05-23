@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 import time
@@ -10,8 +11,44 @@ from fastapi import Cookie, HTTPException
 
 from .database import verify_user
 
+log = logging.getLogger(__name__)
+
 # --- Key & config -----------------------------------------------------------
-_SECRET = os.getenv("SECRET_KEY") or secrets.token_hex(32)
+# SECRET_KEY policy:
+#   - Production (APP_ENV=production / prod): MUST be set, otherwise abort.
+#     A random fallback would invalidate every JWT on every process restart,
+#     silently logging users out and breaking the OTP flow under load.
+#   - Dev (default): warn loudly + auto-generate so first-time `docker compose
+#     up` still works, but make it obvious in the logs.
+_APP_ENV = (os.getenv("APP_ENV") or "dev").strip().lower()
+_SECRET_FROM_ENV = (os.getenv("SECRET_KEY") or "").strip()
+
+if not _SECRET_FROM_ENV:
+    if _APP_ENV in ("prod", "production"):
+        raise RuntimeError(
+            "SECRET_KEY is not set. Refusing to start in APP_ENV=%s with a "
+            "random fallback because every process restart would invalidate "
+            "all issued JWTs. Set SECRET_KEY in the .env file (e.g. "
+            "`python -c 'import secrets; print(secrets.token_hex(32))'`)."
+            % _APP_ENV
+        )
+    log.warning(
+        "SECRET_KEY not set — generating an ephemeral one (APP_ENV=%s). "
+        "All issued JWTs will be invalidated on the next process restart. "
+        "Set SECRET_KEY in .env to make sessions persist across reloads.",
+        _APP_ENV,
+    )
+    _SECRET = secrets.token_hex(32)
+else:
+    if len(_SECRET_FROM_ENV) < 32:
+        log.warning(
+            "SECRET_KEY is shorter than 32 chars (len=%d). HS256 expects at "
+            "least 256 bits of entropy. Consider regenerating with "
+            "`python -c 'import secrets; print(secrets.token_hex(32))'`.",
+            len(_SECRET_FROM_ENV),
+        )
+    _SECRET = _SECRET_FROM_ENV
+
 _ALGO = "HS256"
 _EXPIRE_H = int(os.getenv("TOKEN_EXPIRE_HOURS", "24"))
 

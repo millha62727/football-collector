@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Football Dashboard</title>
+<style>
+:root{
+  --bg:#0d1117;--surface:#161b22;--card:#21262d;--border:#30363d;
+  --primary:#58a6ff;--pdim:#1f3a5f;
+  --red:#f85149;--green:#3fb950;--orange:#d29922;--purple:#bc8cff;--cyan:#39d353;
+  --text:#c9d1d9;--muted:#8b949e;--r:6px;
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+
+/* ---- Header ----
+   z-index intentionally above the idle-lock overlay (9999) so the "🔄 Đổi"
+   button stays clickable even when the screen is locked, letting the user
+   one-click to the /market decoy from any state. */
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10000}
+.hdr-logo{font-size:17px;font-weight:700;color:var(--primary);display:flex;align-items:center;gap:6px}
+.hdr-spacer{flex:1}
+.hdr-info{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.hdr-user{color:var(--text);font-weight:600}
+.btn-sm{padding:5px 12px;border-radius:var(--r);border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-size:12px;transition:all .15s}
+.btn-sm:hover{border-color:var(--primary);color:var(--primary)}
+.btn-sm.danger:hover{border-color:var(--red);color:var(--red)}
+
+/* ---- Status dot ---- */
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.dot-green{background:var(--green);animation:blink 2s infinite}
+.dot-orange{background:var(--orange)}
+.dot-red{background:var(--red)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ---- Main layout ---- */
+.main{flex:1;padding:20px 24px;max-width:1500px;margin:0 auto;width:100%}
+
+/* ---- Control panel ---- */
+.ctrl{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 20px;margin-bottom:18px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.ctrl-status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+.ctrl-meta{font-size:12px;color:var(--muted);flex:1}
+.ctrl-meta span{color:var(--text);font-weight:500}
+.btn{padding:6px 16px;border-radius:var(--r);border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:13px;font-weight:500;transition:all .15s}
+.btn:hover{background:var(--card)}
+.btn-primary{background:var(--pdim);border-color:var(--primary);color:var(--primary)}
+.btn-primary:hover{background:var(--primary);color:#0d1117}
+.btn-warn{background:rgba(210,153,34,.15);border-color:var(--orange);color:var(--orange)}
+.btn-warn:hover{background:var(--orange);color:#0d1117}
+.btn-danger{background:rgba(248,81,73,.1);border-color:var(--red);color:var(--red)}
+.btn-danger:hover{background:var(--red);color:white}
+.btn:disabled{opacity:.4;cursor:default}
+
+/* ---- Stats ---- */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:18px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;text-align:center}
+.stat-n{font-size:26px;font-weight:700;line-height:1.1}
+.stat-l{font-size:11px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
+.c-live{color:var(--red)}.c-ht{color:var(--purple)}.c-up{color:var(--orange)}.c-ft{color:var(--green)}.c-all{color:var(--primary)}
+
+/* ---- Section ---- */
+.sec{margin-bottom:24px}
+.sec-hdr{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.sec-title{font-size:14px;font-weight:700;letter-spacing:.3px}
+.sec-badge{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:2px 8px;font-size:11px;color:var(--muted)}
+
+/* ---- Match cards ---- */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px}
+.mcard{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;transition:border-color .15s}
+.mcard:hover{border-color:var(--primary)}
+.mcard.live{border-left:3px solid var(--red)}
+.mcard.ht{border-left:3px solid var(--purple)}
+.mcomp{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mteams{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.mteam{font-size:13px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mteam.away{text-align:right}
+.mscore{font-size:18px;font-weight:700;color:var(--red);white-space:nowrap;min-width:46px;text-align:center}
+.minfo{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:8px}
+.mmin{color:var(--orange);font-weight:700}
+.modds{display:flex;gap:5px;flex-wrap:wrap}
+.chip{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:3px 7px;font-size:10px}
+.chip b{color:var(--primary)}
+.empty{color:var(--muted);padding:20px;text-align:center;font-size:13px}
+
+/* ---- Table ---- */
+.tbar{display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.tinput{flex:1;min-width:180px;padding:7px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:13px}
+.tinput:focus{outline:none;border-color:var(--primary)}
+.tsel{padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:13px;cursor:pointer}
+.twrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px;min-width:750px}
+th{background:var(--surface);padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,.025)}
+
+/* ---- Badges ---- */
+.badge{display:inline-block;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:.4px}
+.b-live{background:rgba(248,81,73,.2);color:var(--red);border:1px solid rgba(248,81,73,.35)}
+.b-up{background:rgba(210,153,34,.2);color:var(--orange);border:1px solid rgba(210,153,34,.35)}
+.b-ft{background:rgba(63,185,80,.2);color:var(--green);border:1px solid rgba(63,185,80,.35)}
+.b-ht{background:rgba(188,140,255,.2);color:var(--purple);border:1px solid rgba(188,140,255,.35)}
+.b-x{background:rgba(139,148,158,.15);color:var(--muted);border:1px solid var(--border)}
+
+/* ---- Logs ---- */
+.logbox{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;height:220px;overflow-y:auto;font-family:'Consolas','Monaco',monospace;font-size:11px}
+.le{margin-bottom:3px;line-height:1.5}
+.lt{color:var(--muted);margin-right:6px}
+.ll-INFO{color:var(--primary)}
+.ll-WARN{color:var(--orange)}
+.ll-ERROR{color:var(--red)}
+
+/* ---- Error toast ---- */
+.toast{position:fixed;bottom:20px;right:20px;background:#3d1e20;border:1px solid var(--red);border-radius:var(--r);padding:12px 16px;color:var(--red);font-size:13px;display:none;z-index:999}
+
+/* ---- Priority highlights — chỉ tint nhẹ + badge ★ Px góc trái ---- */
+.prio-1,.prio-2,.prio-3,.prio-4{background:rgba(255,255,255,.025)}
+.prio-tag{position:absolute;top:4px;left:8px;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;opacity:.85}
+
+/* ---- Modal ---- */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9000;display:none;align-items:center;justify-content:center;padding:24px}
+.modal-bg.on{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto}
+.modal h2{font-size:17px;margin-bottom:16px;color:var(--primary)}
+.modal label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:10px 0 4px}
+.modal input[type=text],.modal input[type=number]{width:100%;padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:13px}
+.modal input:focus{outline:none;border-color:var(--primary)}
+.modal-row{display:flex;gap:10px}
+.modal-row > *{flex:1}
+.modal-check{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer}
+.modal-check input{width:auto;margin:0}
+.modal-radio{display:flex;gap:14px;margin:8px 0}
+.modal-radio label{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--text);margin:0;cursor:pointer}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid var(--border)}
+.modal-fieldset{border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;margin-top:8px}
+.modal-fieldset legend{font-size:11px;color:var(--muted);padding:0 6px;text-transform:uppercase;letter-spacing:.5px}
+.modal-status{font-size:12px;color:var(--muted);min-height:18px}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="hdr">
+  <div class="hdr-logo">&#x26BD; Football</div>
+  <div class="hdr-spacer"></div>
+  <div class="hdr-info">
+    <span class="dot" id="hdrDot"></span>
+    <span id="hdrStatus">…</span>
+    <span style="color:var(--border)">|</span>
+    <span id="hdrLoop" style="color:var(--muted)"></span>
+    <span style="color:var(--border)">|</span>
+    <span class="hdr-user" id="hdrUser"></span>
+  </div>
+  <a href="/analyzer" class="btn-sm" style="text-decoration:none;display:inline-block">🔍 Analyzer</a>
+  <a href="/data" class="btn-sm" style="text-decoration:none">📦 Dữ liệu (Layer 3)</a>
+  <button class="btn-sm" onclick="openTelegramModal()">📨 Cài đặt Telegram</button>
+  <button class="btn-sm" onclick="goDisguise()">🔄 Đổi</button>
+  <form method="post" action="/logout" style="margin:0">
+    <button class="btn-sm danger" type="submit">Đăng xuất</button>
+  </form>
+</header>
+
+<!-- Main -->
+<div class="main">
+
+  <!-- Control panel -->
+  <div class="ctrl">
+    <div class="ctrl-status">
+      <span class="dot" id="ctrlDot"></span>
+      <span id="ctrlLabel">Đang kết nối…</span>
+    </div>
+    <div class="ctrl-meta">
+      Fetch gần nhất: <span id="ctrlLast">—</span> &nbsp;|&nbsp;
+      Thời gian: <span id="ctrlMs">—</span> &nbsp;|&nbsp;
+      Lỗi: <span id="ctrlErr">0</span> &nbsp;|&nbsp;
+      Đã lưu: <span id="ctrlSaved">0</span>
+    </div>
+    <button class="btn btn-warn" id="btnPause" onclick="ctrlPause()">⏸ Tạm dừng</button>
+    <button class="btn btn-primary" id="btnResume" onclick="ctrlResume()" style="display:none">▶ Tiếp tục</button>
+    <button class="btn" id="btnForce" onclick="ctrlForce()">⚡ Fetch ngay</button>
+  </div>
+
+  <!-- Stats (TỔNG = matches imported via CSV) -->
+  <div class="stats">
+    <div class="stat" title="Trận đã import qua CSV"><div class="stat-n c-all" id="sAll">—</div><div class="stat-l">Tổng (CSV)</div></div>
+    <div class="stat"><div class="stat-n c-live" id="sLive">—</div><div class="stat-l">🔴 Live</div></div>
+    <div class="stat"><div class="stat-n c-ht" id="sHt">—</div><div class="stat-l">⏸ HT</div></div>
+    <div class="stat"><div class="stat-n c-up" id="sUp">—</div><div class="stat-l">⏱ Sắp đấu</div></div>
+    <div class="stat"><div class="stat-n c-ft" id="sFt">—</div><div class="stat-l">✓ Kết thúc</div></div>
+  </div>
+
+  <!-- Live + priority feed (gộp 1 section, lọc stale &gt;4h, bỏ FT) -->
+  <div class="sec">
+    <div class="sec-hdr">
+      <span class="sec-title">🔴 Đang diễn ra</span>
+      <span class="sec-badge" id="liveCount">0</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--muted)">
+        Toàn bộ danh sách → <a href="/data" style="color:var(--primary)">/data (Layer 3)</a>
+      </span>
+    </div>
+    <div class="grid" id="liveGrid"><p class="empty">Không có trận nào đang diễn ra</p></div>
+  </div>
+
+  <!-- Timeline stats (date-picker) -->
+  <div class="sec">
+    <div class="sec-hdr">
+      <span class="sec-title">📅 Thống kê hệ thống</span>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+        <button class="btn-sm" onclick="shiftStatsDate(-1)">◀</button>
+        <input type="date" id="statsDate" class="tsel" style="font-size:12px;padding:4px 8px">
+        <button class="btn-sm" onclick="shiftStatsDate(+1)">▶</button>
+        <button class="btn-sm" onclick="setStatsToToday()" style="margin-left:6px">Hôm nay</button>
+      </div>
+    </div>
+    <div id="statsTimeline" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px"></div>
+  </div>
+
+  <!-- System logs -->
+  <div class="sec">
+    <div class="sec-hdr">
+      <span class="sec-title">🖥 System Log</span>
+      <button class="btn-sm" onclick="clearLogs()" style="margin-left:auto">Xóa</button>
+    </div>
+    <div class="logbox" id="logbox"></div>
+  </div>
+
+</div>
+
+{% include '_lock_overlay.html' %}
+
+<div class="toast" id="toast"></div>
+
+<!-- Telegram Setting modal — Yêu cầu #7 -->
+<div class="modal-bg" id="tgModal" onclick="if(event.target===this)closeTelegramModal()">
+  <div class="modal">
+    <h2>📨 Cài đặt thông báo Telegram</h2>
+    <label>Trận áp dụng</label>
+    <div class="modal-radio">
+      <label><input type="radio" name="tgScope" value="prestigious"> Chỉ giải uy tín</label>
+      <label><input type="radio" name="tgScope" value="all"> Tất cả giải</label>
+    </div>
+
+    <fieldset class="modal-fieldset">
+      <legend>Điều kiện kích hoạt</legend>
+      <div class="modal-row">
+        <div><label>Bàn thắng thứ</label><input type="number" id="tgGoal" min="1" max="20"></div>
+        <div><label>Trước phút</label><input type="number" id="tgMin" min="1" max="120"></div>
+      </div>
+    </fieldset>
+
+    <fieldset class="modal-fieldset">
+      <legend>Nội dung báo cáo</legend>
+      <label class="modal-check"><input type="checkbox" id="tgIncName"> Tên trận</label>
+      <label class="modal-check"><input type="checkbox" id="tgIncComp"> Tên giải</label>
+      <label class="modal-check"><input type="checkbox" id="tgIncG1"> Bàn 1 — (HC trước→sau · OU trước→sau · phút)</label>
+      <label class="modal-check"><input type="checkbox" id="tgIncG2"> Bàn 2</label>
+      <label class="modal-check"><input type="checkbox" id="tgIncG3"> Bàn 3</label>
+      <label class="modal-check"><input type="checkbox" id="tgIncG4"> Bàn 4</label>
+    </fieldset>
+
+    <label>Bot token (để trống = dùng <code>TELEGRAM_BOT_TOKEN</code> từ .env)</label>
+    <input type="text" id="tgBotToken" placeholder="123456:ABC-DEF...">
+
+    <label>Chat ID (phân cách dấu phẩy, để trống = dùng <code>TELEGRAM_CHAT_IDS</code> từ .env)</label>
+    <input type="text" id="tgChats" placeholder="123456789,987654321">
+
+    <div id="tgDiag" style="margin-top:10px;font-size:11px;color:var(--muted)"></div>
+    <div class="modal-status" id="tgStatus"></div>
+
+    <div class="modal-actions">
+      <button class="btn-sm" onclick="testTelegram()">Gửi thử</button>
+      <button class="btn-sm" onclick="closeTelegramModal()">Đóng</button>
+      <button class="btn-sm" style="background:var(--pdim);color:var(--primary);border-color:var(--primary)" onclick="saveTelegramSettings()">💾 Đổi & lưu</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ------------------------------------------------------------------ state
+let allMatches = [];
+let localLogs = [];
+let currentUser = '';
+let statsDate = ''; // YYYY-MM-DD; '' = let the picker pick today on init
+
+// ------------------------------------------------------------------ pin system
+const PINNED_KEY = 'fbc_pinned';
+function getPinned() { try { return new Set(JSON.parse(localStorage.getItem(PINNED_KEY)||'[]')); } catch(_){ return new Set(); } }
+function savePinned(s) { localStorage.setItem(PINNED_KEY, JSON.stringify([...s])); }
+function togglePin(id, ev) {
+  ev && ev.stopPropagation();
+  const p = getPinned();
+  if (p.has(id)) p.delete(id); else p.add(id);
+  savePinned(p);
+  renderLive(); renderPriority();
+}
+
+// ------------------------------------------------------------------ utils
+function fmt(utcStr) {
+  if (!utcStr) return '—';
+  return new Date(utcStr).toLocaleString('vi-VN', {
+    month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit',
+    timeZone:'Asia/Ho_Chi_Minh'
+  });
+}
+
+function fmtAgo(isoStr) {
+  if (!isoStr) return '—';
+  const diff = Math.round((Date.now() - new Date(isoStr).getTime()) / 1000);
+  if (diff < 5)  return 'vừa xong';
+  if (diff < 60) return diff + 's trước';
+  return Math.round(diff / 60) + 'm trước';
+}
+
+function badge(status) {
+  const live = ['LIVE','H1','H2','INJURY_TIME_H1','INJURY_TIME_H2'];
+  if (live.includes(status)) return '<span class="badge b-live">LIVE</span>';
+  if (status === 'HT')       return '<span class="badge b-ht">HT</span>';
+  if (status === 'UPCOMING') return '<span class="badge b-up">UPCOMING</span>';
+  if (status === 'FT')       return '<span class="badge b-ft">FT</span>';
+  return '<span class="badge b-x">' + status + '</span>';
+}
+
+function isLive(s) {
+  return ['LIVE','H1','H2','INJURY_TIME_H1','INJURY_TIME_H2','HT'].includes(s);
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 3500);
+}
+
+// ------------------------------------------------------------------ api
+async function apiFetch(url, opts) {
+  try {
+    const r = await fetch(url, opts);
+    if (r.status === 401) { location.href = '/login'; return null; }
+    return r.ok ? r.json() : null;
+  } catch (e) {
+    console.error('[apiFetch]', url, e.message);
+    showToast('Loi ket noi: ' + e.message);
+    return null;
+  }
+}
+
+// ------------------------------------------------------------------ status poll
+async function pollStatus() {
+  const data = await apiFetch('/api/status');
+  if (!data) return;
+
+  const c = data.collector;
+  currentUser = data.user || '';
+  document.getElementById('hdrUser').textContent = currentUser;
+
+  // Dot + label
+  const runDot  = c.running && !c.paused;
+  const dotId   = ['hdrDot','ctrlDot'];
+  const dotCls  = c.running ? (c.paused ? 'dot dot-orange' : 'dot dot-green') : 'dot dot-red';
+  dotId.forEach(id => document.getElementById(id).className = dotCls);
+  document.getElementById('hdrStatus').textContent =
+    c.running ? (c.paused ? 'Tạm dừng' : 'Đang chạy') : 'Đã dừng';
+  document.getElementById('hdrLoop').textContent = 'Loop #' + c.loop_count;
+  document.getElementById('ctrlLabel').textContent =
+    c.running ? (c.paused ? '⏸ Đã tạm dừng' : '● Đang chạy') : '■ Đã dừng';
+
+  // Control buttons
+  document.getElementById('btnPause').style.display  = (c.running && !c.paused) ? '' : 'none';
+  document.getElementById('btnResume').style.display = (c.running && c.paused)  ? '' : 'none';
+
+  // Meta
+  document.getElementById('ctrlLast').textContent  = fmtAgo(c.last_fetch_at);
+  document.getElementById('ctrlMs').textContent    = c.last_fetch_ms ? c.last_fetch_ms + ' ms' : '—';
+  document.getElementById('ctrlErr').textContent   = c.error_count;
+  document.getElementById('ctrlSaved').textContent = c.session_saved;
+
+  // Stats — TỔNG = CSV-imported matches (Yêu cầu #1)
+  const s = data.stats;
+  document.getElementById('sAll').textContent  = (s.csv_total != null ? s.csv_total : s.total);
+  document.getElementById('sLive').textContent = s.live;
+  document.getElementById('sHt').textContent   = s.ht;
+  document.getElementById('sUp').textContent   = s.upcoming;
+  document.getElementById('sFt').textContent   = s.ft;
+
+  // Logs
+  const newLogs = data.logs || [];
+  if (newLogs.length !== localLogs.length || (newLogs.length > 0 && newLogs[newLogs.length-1].t !== (localLogs[localLogs.length-1]||{}).t)) {
+    localLogs = newLogs;
+    renderLogs();
+  }
+}
+
+// ------------------------------------------------------------------ matches poll
+async function pollMatches() {
+  const data = await apiFetch('/api/matches');
+  if (!data) return;
+  allMatches = data;
+  renderFeed();
+}
+
+// In-half time: 1H:31, 2H:15 (m-45), HT, INJURY_TIME_H1 -> 1H:45+, INJURY_TIME_H2 -> 2H:45+, FT
+function fmtInHalf(m){
+  const s = (m && m.status ? m.status : '').toUpperCase();
+  const mm = m ? m.minute : null;
+  if (s === 'FT') return 'FT';
+  if (s === 'HT') return 'HT';
+  if (s === 'INJURY_TIME_H1') return '1H:45+';
+  if (s === 'INJURY_TIME_H2') return '2H:45+';
+  if (s === 'H1') return '1H:' + (mm != null ? mm : '');
+  if (s === 'H2') return '2H:' + (mm != null ? Math.max(0, mm - 45) : '');
+  if (s === 'LIVE' && mm != null) return (mm <= 45 ? '1H:' + mm : '2H:' + (mm - 45));
+  if (s === 'UPCOMING' || mm == null) return '—';
+  return s;
+}
+
+// ------------------------------------------------------------------ render live cards
+function renderMatchCard(m, prefix){
+  const pinned = getPinned();
+  const cls = m.status === 'HT' ? 'ht' : (isLive(m.status) ? 'live' : '');
+  const min = fmtInHalf(m);
+  const ou  = m.ou_line   ? '<div class="chip">OU <b>' + m.ou_line + '</b></div>' : '';
+  const hc  = m.home_handicap ? '<div class="chip">HC <b>' + m.home_handicap + '</b></div>' : '';
+  const x2  = m.odds_1 ? '<div class="chip">1X2 <b>' + m.odds_1 + '</b> ' + (m.odds_x||'?') + ' <b>' + m.odds_2 + '</b></div>' : '';
+  const href = '/match/' + encodeURIComponent(m.id);
+  const aHref = '/analyzer?match_id=' + encodeURIComponent(m.id);
+  const isPinned = pinned.has(m.id);
+  const pinBtn = '<button onclick="togglePin(' + JSON.stringify(m.id) + ',event)" style="position:absolute;top:8px;right:8px;background:none;border:none;cursor:pointer;font-size:14px;opacity:' + (isPinned?'1':'.35') + ';padding:2px;z-index:2">' + (isPinned?'⭐':'☆') + '</button>';
+  const prio = m.priority_level || 5;
+  const prioCls = (prio <= 4) ? ('prio-' + prio) : '';
+  const prioTag = (prio <= 4) ? ('<span class="prio-tag" style="color:'+(prio===1?'#d29922':prio===2?'#f85149':prio===3?'#3fb950':'#58a6ff')+'">★ P'+prio+'</span>') : '';
+  return '<div class="mcard ' + cls + ' ' + prioCls + '" style="position:relative" data-prio="'+prio+'">' +
+    prioTag + pinBtn +
+    '<a href="' + href + '" style="text-decoration:none;color:inherit;display:block;padding-top:'+(prio<=4?'12px':'0')+'">' +
+    '<div class="mcomp">' + m.competition + '</div>' +
+    '<div class="mteams"><div class="mteam">' + m.home + '</div>' +
+    '<div class="mscore">' + (m.home_score||0) + ' - ' + (m.away_score||0) + '</div>' +
+    '<div class="mteam away">' + m.away + '</div></div>' +
+    '<div class="minfo"><span>' + fmt(m.start_time_utc) + '</span><span class="mmin">' + min + '</span></div>' +
+    '<div class="modds">' + ou + hc + x2 + '</div>' +
+    '</a>' +
+    '<a href="' + aHref + '" style="display:block;text-align:center;padding:5px;font-size:11px;font-weight:700;color:var(--primary);border-top:1px solid var(--border);text-decoration:none;background:rgba(88,166,255,.05)">🔍 Phân tích</a>' +
+    '</div>';
+}
+
+function renderFeed() {
+  // Gộp live + priority P1-P4 vào 1 feed. Lọc FT và stale (>4h).
+  const STALE_MS = 4 * 3600 * 1000;
+  const now = Date.now();
+  const fresh = allMatches.filter(m => {
+    if (m.status === 'FT') return false;
+    if (!m.start_time_utc) return true;
+    return (now - new Date(m.start_time_utc).getTime()) <= STALE_MS;
+  });
+  const sortKey = (a,b) => (a.priority_level||5) - (b.priority_level||5)
+                          || new Date(b.start_time_utc) - new Date(a.start_time_utc);
+  const live = fresh.filter(m => isLive(m.status)).sort(sortKey);
+  const prio = fresh.filter(m => !isLive(m.status) && (m.priority_level||5) <= 4).sort(sortKey).slice(0, 30);
+  const all = live.concat(prio);
+  document.getElementById('liveCount').textContent = all.length;
+  const el = document.getElementById('liveGrid');
+  if (!all.length) { el.innerHTML = '<p class="empty">Không có trận nào đang diễn ra</p>'; return; }
+  el.innerHTML = all.map(m => renderMatchCard(m, 'feed')).join('');
+}
+
+// ------------------------------------------------------------------ render logs
+function renderLogs() {
+  const box = document.getElementById('logbox');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 30;
+  box.innerHTML = localLogs.map(e =>
+    '<div class="le"><span class="lt">' + e.t + '</span>' +
+    '<span class="ll-' + e.l + '">[' + e.l + ']</span> ' + e.m + '</div>'
+  ).join('');
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+function clearLogs() { localLogs = []; renderLogs(); }
+
+// ------------------------------------------------------------------ controls
+async function ctrlPause() {
+  const r = await apiFetch('/api/collector/pause', {method:'POST'});
+  if (r) showToast('Đã tạm dừng collector');
+  pollStatus();
+}
+async function ctrlResume() {
+  const r = await apiFetch('/api/collector/resume', {method:'POST'});
+  if (r) showToast('Đã tiếp tục collector');
+  pollStatus();
+}
+async function ctrlForce() {
+  const r = await apiFetch('/api/collector/force', {method:'POST'});
+  if (r) { showToast('Đang fetch dữ liệu ngay…'); setTimeout(pollMatches, 2000); }
+}
+
+// ------------------------------------------------------------------ timeline stats (date-picker)
+function isoToday(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function setStatsToToday(){ statsDate = isoToday(); document.getElementById('statsDate').value = statsDate; pollTimeline(); }
+function shiftStatsDate(days){
+  const cur = statsDate || isoToday();
+  const d = new Date(cur+'T00:00:00');
+  d.setDate(d.getDate()+days);
+  statsDate = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  document.getElementById('statsDate').value = statsDate;
+  pollTimeline();
+}
+async function pollTimeline() {
+  if (!statsDate) statsDate = isoToday();
+  const url = '/api/stats/timeline?date=' + encodeURIComponent(statsDate);
+  const data = await apiFetch(url);
+  if (!data) return;
+  const el = document.getElementById('statsTimeline');
+  if (!el) return;
+  el.innerHTML = [
+    {n: data.matches, l:'Trận đấu', c:'c-all'},
+    {n: data.goals, l:'Tổng bàn', c:'c-live'},
+    {n: data.avg_goals, l:'TB bàn/trận', c:'c-live'},
+    {n: (data.pct_3plus!=null?data.pct_3plus+'%':'—'), l:'≥3 bàn', c:'c-up'},
+    {n: data.live, l:'Đang live', c:'c-live'},
+    {n: data.finished, l:'Kết thúc', c:'c-ft'},
+    {n: data.competitions, l:'Giải đấu', c:'c-ht'},
+    {n: data.prestigious_count, l:'Giải uy tín', c:'c-up'},
+    {n: data.big_odds_swing_count, l:'Kèo biến động lớn', c:'c-ht'},
+  ].map(s=>'<div class="stat"><div class="stat-n '+s.c+'">'+(s.n!=null?s.n:'—')+'</div><div class="stat-l">'+s.l+'</div></div>').join('');
+}
+
+// ------------------------------------------------------------------ Telegram modal
+async function openTelegramModal(){
+  const m = await apiFetch('/api/telegram/settings'); if (!m) return;
+  document.querySelector('input[name=tgScope][value="'+m.scope+'"]').checked = true;
+  document.getElementById('tgGoal').value = m.goal_threshold;
+  document.getElementById('tgMin').value  = m.before_minute;
+  document.getElementById('tgIncName').checked = !!m.include_match_name;
+  document.getElementById('tgIncComp').checked = !!m.include_competition;
+  document.getElementById('tgIncG1').checked = !!m.include_goal_1;
+  document.getElementById('tgIncG2').checked = !!m.include_goal_2;
+  document.getElementById('tgIncG3').checked = !!m.include_goal_3;
+  document.getElementById('tgIncG4').checked = !!m.include_goal_4;
+  document.getElementById('tgChats').value = m.chat_ids || '';
+  document.getElementById('tgBotToken').value = m.bot_token || '';
+  document.getElementById('tgStatus').textContent = '';
+  document.getElementById('tgModal').classList.add('on');
+  await refreshTgDiag();
+}
+async function refreshTgDiag(){
+  const d = await apiFetch('/api/telegram/diagnose');
+  const el = document.getElementById('tgDiag');
+  if (!d) { el.textContent = ''; return; }
+  el.innerHTML =
+    'Bot token: <b style="color:'+(d.has_bot_token?'var(--green)':'var(--red)')+'">'+(d.has_bot_token?('OK · '+d.token_source):'thiếu')+'</b>' +
+    ' · Chat ID: <b style="color:'+(d.has_chat_ids?'var(--green)':'var(--red)')+'">'+(d.has_chat_ids?(d.chat_count+' chat · '+d.chat_source):'thiếu')+'</b>';
+}
+function closeTelegramModal(){ document.getElementById('tgModal').classList.remove('on'); }
+async function saveTelegramSettings(){
+  const payload = {
+    scope: (document.querySelector('input[name=tgScope]:checked')||{}).value || 'prestigious',
+    goal_threshold: parseInt(document.getElementById('tgGoal').value || '3', 10),
+    before_minute:  parseInt(document.getElementById('tgMin').value  || '75', 10),
+    include_match_name:  document.getElementById('tgIncName').checked,
+    include_competition: document.getElementById('tgIncComp').checked,
+    include_goal_1: document.getElementById('tgIncG1').checked,
+    include_goal_2: document.getElementById('tgIncG2').checked,
+    include_goal_3: document.getElementById('tgIncG3').checked,
+    include_goal_4: document.getElementById('tgIncG4').checked,
+    chat_ids: document.getElementById('tgChats').value.trim(),
+    bot_token: document.getElementById('tgBotToken').value.trim(),
+  };
+  const r = await fetch('/api/telegram/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  if (!r || !r.ok) { document.getElementById('tgStatus').textContent = 'Lỗi lưu cấu hình'; return; }
+  document.getElementById('tgStatus').textContent = 'Đã lưu. Phiên sẽ bị khoá để xác thực lại.';
+  // Yêu cầu #12 — force re-auth via the existing idle-lock OTP flow.
+  setTimeout(() => {
+    closeTelegramModal();
+    if (typeof window.showLock === 'function') window.showLock();
+  }, 500);
+}
+async function testTelegram(){
+  const el = document.getElementById('tgStatus');
+  el.textContent = 'Đang gửi tin thử...';
+  const r = await fetch('/api/telegram/test', {method:'POST'});
+  if (r.status === 401) { location.href='/login'; return; }
+  let j = null; try { j = await r.json(); } catch(_) {}
+  await refreshTgDiag();
+  if (!j) { el.textContent = 'Không gửi được tin thử (HTTP '+r.status+').'; return; }
+  if (j.ok) {
+    el.textContent = 'Đã gửi ' + (j.sent||0) + '/' + (j.total||0) + ' chat. Mở Telegram kiểm tra.';
+  } else {
+    el.textContent = 'Lỗi: ' + (j.error || 'unknown');
+  }
+}
+
+// ------------------------------------------------------------------ init
+setStatsToToday();
+pollStatus();
+pollMatches();
+pollTimeline();
+setInterval(pollStatus,  5000);
+setInterval(pollMatches, 12000);
+setInterval(pollTimeline, 30000);
+</script>
+<script src="/static/lock.js"></script>
+</body>
+</html>

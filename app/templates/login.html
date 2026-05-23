@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Football Dashboard — Login</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--primary:#58a6ff;--danger:#f85149;--text:#c9d1d9;--muted:#8b949e;--green:#3fb950;--r:6px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:40px;width:100%;max-width:400px}
+.logo{text-align:center;font-size:52px;margin-bottom:12px}
+h1{text-align:center;font-size:22px;font-weight:700;margin-bottom:4px}
+.sub{text-align:center;color:var(--muted);font-size:13px;margin-bottom:28px}
+label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin-bottom:6px}
+input{width:100%;padding:10px 14px;background:#0d1117;border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:14px;margin-bottom:16px;transition:border-color .15s}
+input:focus{outline:none;border-color:var(--primary)}
+input.otp{text-align:center;font-size:22px;letter-spacing:8px;font-family:'SF Mono','Consolas',monospace}
+button{width:100%;padding:11px;background:var(--primary);border:none;border-radius:var(--r);color:#0d1117;font-size:14px;font-weight:700;cursor:pointer;margin-top:4px;transition:background .15s}
+button:hover{background:#79c0ff}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.link{background:transparent;color:var(--muted);font-weight:400;font-size:12px;text-decoration:underline;padding:6px;margin-top:8px}
+button.link:hover{background:transparent;color:var(--primary)}
+.err{background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);border-radius:var(--r);padding:10px 14px;color:var(--danger);font-size:13px;margin-bottom:16px}
+.ok{background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);border-radius:var(--r);padding:10px 14px;color:var(--green);font-size:13px;margin-bottom:16px}
+.muted{color:var(--muted);font-size:12px;margin-bottom:12px}
+.muted b{color:var(--text)}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">&#x26BD;</div>
+  <h1>Football Dashboard</h1>
+  <p class="sub">Đăng nhập bằng OTP qua Telegram</p>
+  <div id="msg"></div>
+
+  <!-- Step 1: enter username, request OTP -->
+  <div id="step1">
+    <label for="u">Tên đăng nhập</label>
+    <input type="text" id="u" placeholder="admin" autofocus autocomplete="username" onkeydown="if(event.key==='Enter')requestOtp()">
+    <button id="btnReq" onclick="requestOtp()">Gửi OTP qua Telegram</button>
+  </div>
+
+  <!-- Step 2: enter OTP -->
+  <div id="step2" class="hidden">
+    <div class="muted">Tài khoản: <b id="uShow"></b><br>OTP đã được gửi đến Telegram. Hết hạn sau <b id="ttl">5</b> phút.</div>
+    <label for="otp">Mã OTP</label>
+    <input type="text" id="otp" class="otp" inputmode="numeric" maxlength="6" placeholder="------" autocomplete="one-time-code" onkeydown="if(event.key==='Enter')verifyOtp()">
+    <button id="btnVerify" onclick="verifyOtp()">Đăng nhập</button>
+    <button class="link" onclick="resetStep()">Quay lại</button>
+    <button class="link" onclick="requestOtp(true)">Gửi lại OTP</button>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+function showMsg(html, cls){ $('msg').innerHTML = html ? '<div class="'+cls+'">'+html+'</div>' : ''; }
+function escHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function requestOtp(isResend){
+  const u = $('u').value.trim();
+  if (!u) { showMsg('Nhập tên đăng nhập', 'err'); $('u').focus(); return; }
+  showMsg('Đang gửi OTP...', 'ok');
+  $('btnReq').disabled = true;
+  try {
+    const r = await fetch('/api/auth/request-otp', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username: u})
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) {
+      showMsg(escHtml(j.error || 'Không gửi được OTP'), 'err');
+      $('btnReq').disabled = false;
+      return;
+    }
+    $('uShow').textContent = u;
+    $('ttl').textContent = Math.max(1, Math.round((j.ttl_seconds||300)/60));
+    $('step1').classList.add('hidden');
+    $('step2').classList.remove('hidden');
+    showMsg(isResend ? 'Đã gửi lại OTP' : 'OTP đã được gửi qua Telegram', 'ok');
+    setTimeout(() => $('otp').focus(), 50);
+  } catch(e) {
+    showMsg('Lỗi kết nối: ' + escHtml(e.message||e), 'err');
+    $('btnReq').disabled = false;
+  }
+}
+
+async function verifyOtp(){
+  const u = $('u').value.trim();
+  const code = $('otp').value.trim();
+  if (!code) { showMsg('Nhập OTP', 'err'); return; }
+  $('btnVerify').disabled = true;
+  showMsg('Đang xác thực...', 'ok');
+  try {
+    const r = await fetch('/api/auth/verify-otp', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username: u, otp: code})
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) {
+      showMsg(escHtml(j.error || 'OTP không đúng hoặc đã hết hạn'), 'err');
+      $('otp').value = '';
+      $('otp').focus();
+      $('btnVerify').disabled = false;
+      return;
+    }
+    showMsg('Đăng nhập thành công, đang chuyển...', 'ok');
+    location.href = '/';
+  } catch(e) {
+    showMsg('Lỗi kết nối: ' + escHtml(e.message||e), 'err');
+    $('btnVerify').disabled = false;
+  }
+}
+
+function resetStep(){
+  $('step2').classList.add('hidden');
+  $('step1').classList.remove('hidden');
+  $('btnReq').disabled = false;
+  $('btnVerify').disabled = false;
+  $('otp').value = '';
+  showMsg('', '');
+  $('u').focus();
+}
+</script>
+</body>
+</html>

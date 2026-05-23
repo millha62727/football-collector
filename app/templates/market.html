@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CryptoWatch — Live Markets</title>
+<style>
+:root{--bg:#0a0e1a;--card:#0f1629;--border:#1e2a42;--primary:#00c2ff;--green:#00e676;--red:#ff4444;--text:#e2e8f0;--muted:#64748b;--r:8px}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.nav{background:var(--card);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:24px}
+.nav-brand{font-size:18px;font-weight:800;color:var(--primary);letter-spacing:-0.5px}
+.nav-links{display:flex;gap:20px}
+.nav-links a{color:var(--muted);text-decoration:none;font-size:14px;transition:color .15s}
+.nav-links a:hover{color:var(--text)}
+.nav-links a.active{color:var(--primary);font-weight:600}
+.nav-spacer{flex:1}
+.nav-price{font-size:12px;color:var(--muted)}
+.main{padding:28px;max-width:1300px;margin:0 auto}
+h2{font-size:20px;font-weight:700;margin-bottom:18px;color:var(--text)}
+.hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:28px}
+.hero-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:18px}
+.hc-sym{font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.5px;margin-bottom:4px}
+.hc-price{font-size:24px;font-weight:800;margin-bottom:6px}
+.hc-chg{font-size:13px;font-weight:600}
+.up{color:var(--green)}.dn{color:var(--red)}
+.tbl-wrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{padding:12px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--muted);border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.5px}
+td{padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.04);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(0,194,255,.03)}
+.sym{font-weight:700;color:var(--text)}
+.bar{display:inline-block;width:80px;height:4px;background:#1e2a42;border-radius:2px;overflow:hidden;vertical-align:middle;margin-left:8px}
+.bar-fill{height:100%;background:var(--green);border-radius:2px;transition:width .5s}
+
+/* ---- Return-gate popup (subtle red/yellow) ----
+   Forces a Telegram OTP before the user can leave /market.
+   Background uses a dimmer + slight warm tint instead of pure black so
+   the decoy market UI is still visible behind. */
+.gate-bg{position:fixed;inset:0;background:radial-gradient(ellipse at center,rgba(255,180,80,.08),rgba(0,0,0,.78));backdrop-filter:blur(2px);z-index:9000;display:flex;align-items:center;justify-content:center;padding:24px}
+.gate-bg.hidden{display:none}
+.gate{position:relative;background:linear-gradient(180deg,#1a1410,#0e0a07);border:1px solid transparent;border-radius:12px;padding:0;width:100%;max-width:380px;box-shadow:0 22px 48px rgba(0,0,0,.55),0 0 0 1px rgba(255,200,90,.18)}
+.gate::before{content:'';position:absolute;inset:-1px;border-radius:13px;padding:1px;background:linear-gradient(135deg,#ff7676 0%,#ffd166 55%,#ff7676 100%);-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;opacity:.6;pointer-events:none}
+.gate-hdr{display:flex;align-items:center;gap:10px;padding:14px 18px;background:linear-gradient(90deg,rgba(255,118,118,.10),rgba(255,209,102,.10));border-bottom:1px solid rgba(255,209,102,.18);border-radius:12px 12px 0 0}
+.gate-hdr .icon{font-size:18px}
+.gate-hdr .title{font-size:13px;font-weight:700;letter-spacing:.3px;color:#ffd9a3}
+.gate-hdr .close{margin-left:auto;background:none;border:0;color:#8b6a4a;cursor:pointer;font-size:18px;line-height:1;padding:2px 6px;border-radius:4px}
+.gate-hdr .close:hover{background:rgba(255,209,102,.08);color:#ffd166}
+.gate-body{padding:18px 20px 20px}
+.gate-body p{color:#c9bca8;font-size:12.5px;line-height:1.5;margin-bottom:14px}
+.gate-body p b{color:#ffd9a3}
+.gate-row{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+.gate-otp{padding:11px 14px;background:#15110c;border:1px solid rgba(255,209,102,.22);border-radius:6px;color:#ffe1ba;font-size:20px;letter-spacing:7px;text-align:center;font-family:'SF Mono','Consolas',monospace}
+.gate-otp:focus{outline:none;border-color:#ffb454;background:#1a140d}
+.gate-otp:disabled{opacity:.45}
+.gate-btn{padding:10px 14px;border-radius:6px;border:1px solid rgba(255,209,102,.32);background:rgba(255,209,102,.10);color:#ffd9a3;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.gate-btn:hover:not(:disabled){background:rgba(255,209,102,.18);border-color:#ffd166;color:#fff2d1}
+.gate-btn:disabled{opacity:.45;cursor:not-allowed}
+.gate-btn.primary{background:linear-gradient(90deg,#ff7676,#ffb454);color:#1a0f06;border-color:transparent;font-weight:700}
+.gate-btn.primary:hover:not(:disabled){background:linear-gradient(90deg,#ff8585,#ffc275);box-shadow:0 4px 14px rgba(255,170,90,.28)}
+.gate-msg{font-size:11.5px;color:#a59078;min-height:16px;margin-top:8px}
+.gate-err{color:#ff8a8a}
+.gate-ok{color:#a8d39b}
+.gate-reopen{position:fixed;bottom:18px;right:18px;background:linear-gradient(135deg,#ff7676,#ffd166);color:#1a0f06;border:0;border-radius:50%;width:46px;height:46px;font-size:20px;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.4),0 0 0 1px rgba(255,209,102,.4);z-index:8500;display:none}
+.gate-reopen.on{display:flex;align-items:center;justify-content:center}
+</style>
+</head>
+<body>
+
+<!-- Return-gate: hidden by default. Server-side middleware (set on /market
+     visit, cleared on OTP verify) already prevents navigation away, so the
+     popup only opens when the user explicitly clicks the floating button. -->
+<div class="gate-bg hidden" id="gateBg">
+  <div class="gate">
+    <div class="gate-hdr">
+      <span class="icon">&#x1F510;</span>
+      <span class="title">X&#xE1;c th&#x1EF1;c &#x111;&#x1EC3; quay l&#x1EA1;i</span>
+      <button class="close" type="button" onclick="hideGate()" title="&#x110;&#xF3;ng">&times;</button>
+    </div>
+    <div class="gate-body">
+      <p>Phi&#xEA;n &#x111;ang &#x1EDF; <b>ch&#x1EBF; &#x111;&#x1ED9; decoy</b>. Nh&#x1EADp m&#xE3; OTP nh&#x1EADn qua Telegram &#x111;&#x1EC3; quay l&#x1EA1;i b&#x1EA3;ng &#x111;i&#x1EC1;u khi&#x1EC3;n.</p>
+      <div class="gate-row">
+        <button id="gateBtnReq" class="gate-btn" type="button" onclick="gateReqOtp()">G&#x1EEDi OTP qua Telegram</button>
+        <input id="gateOtp" class="gate-otp" type="text" inputmode="numeric" maxlength="6" placeholder="------" disabled onkeydown="if(event.key==='Enter')gateVerify()" autocomplete="one-time-code">
+        <button id="gateBtnVerify" class="gate-btn primary" type="button" onclick="gateVerify()" disabled>M&#x1EDF; kh&#xF3;a &amp; quay l&#x1EA1;i</button>
+      </div>
+      <div class="gate-msg" id="gateMsg">B&#x1EA5;m "G&#x1EEDi OTP" &#x111;&#x1EC3; nh&#x1EADn m&#xE3; 6 ch&#x1EEF; s&#x1ED1; qua Telegram.</div>
+    </div>
+  </div>
+</div>
+
+<button class="gate-reopen on" id="gateReopen" type="button" onclick="showGate()" title="M&#x1EDF; x&#xE1;c th&#x1EF1;c">&#x1F510;</button>
+
+<nav class="nav">
+  <div class="nav-brand">&#x2B21; CryptoWatch</div>
+  <div class="nav-links">
+    <a href="#" class="active">Markets</a>
+    <a href="#">Portfolio</a>
+    <a href="#">Watchlist</a>
+    <a href="#">News</a>
+  </div>
+  <div class="nav-spacer"></div>
+  <div class="nav-price" id="btcNav">BTC $&#x2014;</div>
+</nav>
+<div class="main">
+  <div class="hero" id="hero"></div>
+  <h2>All Markets</h2>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Name</th><th>Price</th><th>24h %</th><th>Market Cap</th><th>Volume 24h</th><th>7d Range</th></tr></thead>
+      <tbody id="tbl"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+const BASE = {BTC:67432.18,ETH:3521.44,BNB:587.22,SOL:178.95,XRP:0.6234,ADA:0.4821,DOT:7.34,AVAX:36.72,MATIC:0.8821,LINK:14.92,LTC:82.44,UNI:8.73,ATOM:9.11,ALGO:0.1893};
+const state = {};
+for(const [k,v] of Object.entries(BASE)) state[k]={p:v,p0:v,chg:0};
+const CAPS = {BTC:1320000,ETH:423000,BNB:88000,SOL:79000,XRP:34000,ADA:17000,DOT:10000,AVAX:15000,MATIC:8000,LINK:8500,LTC:6100,UNI:5200,ATOM:3300,ALGO:1500};
+function rng(min,max){return min+(Math.random()*(max-min));}
+function tick(){
+  for(const k of Object.keys(state)){
+    const s=state[k]; const d=(Math.random()-.5)*s.p0*0.0012; s.p=Math.max(s.p0*.7,s.p+d);
+    s.chg=((s.p-s.p0)/s.p0*100);
+  }
+  render();
+}
+function fmt(n,d=2){return n>=1e9?(n/1e9).toFixed(2)+'B':n>=1e6?(n/1e6).toFixed(2)+'M':n.toFixed(d);}
+function render(){
+  const keys=Object.keys(state);
+  document.getElementById('hero').innerHTML=keys.slice(0,4).map(k=>{
+    const s=state[k]; const up=s.chg>=0;
+    return '<div class="hero-card"><div class="hc-sym">'+k+'/USDT</div>'+
+      '<div class="hc-price">$'+fmt(s.p,s.p<1?4:2)+'</div>'+
+      '<div class="hc-chg '+(up?'up':'dn')+'">'+(up?'&#x25B2;':'&#x25BC;')+' '+Math.abs(s.chg).toFixed(2)+'%</div></div>';
+  }).join('');
+  document.getElementById('btcNav').textContent='BTC $'+fmt(state.BTC.p,0);
+  let r=''; keys.forEach((k,i)=>{
+    const s=state[k]; const up=s.chg>=0; const vol=CAPS[k]*(rng(.08,.14));
+    const hi=s.p0*rng(1.005,1.025); const lo=s.p0*rng(.975,.995);
+    const pct=(s.p-lo)/(hi-lo)*100;
+    r+='<tr><td style="color:var(--muted)">'+(i+1)+'</td>'+
+      '<td class="sym">'+k+'<span style="color:var(--muted);font-weight:400;margin-left:6px">'+k+'USDT</span></td>'+
+      '<td>$'+fmt(s.p,s.p<1?4:2)+'</td>'+
+      '<td class="'+(up?'up':'dn')+'">'+(up?'+':'')+s.chg.toFixed(2)+'%</td>'+
+      '<td>$'+fmt(CAPS[k]*1e6)+'</td>'+
+      '<td>$'+fmt(vol*1e6)+'</td>'+
+      '<td><span style="color:var(--muted);font-size:11px">$'+fmt(s.p0*.975,s.p<1?4:2)+'</span>'+
+      '<div class="bar"><div class="bar-fill" style="width:'+pct.toFixed(0)+'%"></div></div>'+
+      '<span style="color:var(--muted);font-size:11px">$'+fmt(s.p0*1.025,s.p<1?4:2)+'</span></td></tr>';
+  });
+  document.getElementById('tbl').innerHTML=r;
+}
+render();
+setInterval(tick,2200);
+
+// ───────────────────────────────────────────────────────────────────────
+// Return-gate. The page is hidden by default — server-side middleware (the
+// market_gate cookie set on /market visit) already enforces that any other
+// route the user tries (Back, Forward, address bar, link click) bounces
+// straight back to /market. The popup only opens when the user explicitly
+// clicks the 🔐 floating button.
+// Reuses /api/lock/request-otp + /api/lock/verify-otp so we don't duplicate
+// the bot plumbing — verify-otp clears the cookie server-side on success.
+// ───────────────────────────────────────────────────────────────────────
+(function(){
+  const gateBg = document.getElementById('gateBg');
+  const reopen = document.getElementById('gateReopen');
+  const msg    = document.getElementById('gateMsg');
+  const otp    = document.getElementById('gateOtp');
+  const btnReq = document.getElementById('gateBtnReq');
+  const btnVer = document.getElementById('gateBtnVerify');
+  let otpRequested = false;
+
+  function setMsg(text, cls){
+    msg.textContent = text || '';
+    msg.className = 'gate-msg' + (cls ? ' ' + cls : '');
+  }
+
+  window.showGate = function(){
+    gateBg.classList.remove('hidden');
+    reopen.classList.remove('on');
+    setMsg('Bấm "Gửi OTP" để nhận mã 6 chữ số qua Telegram.', '');
+  };
+  window.hideGate = function(){
+    gateBg.classList.add('hidden');
+    reopen.classList.add('on');
+  };
+
+  window.gateReqOtp = async function(){
+    btnReq.disabled = true; btnReq.textContent = 'Đang gửi...';
+    setMsg('Đang gửi OTP qua Telegram...', '');
+    try {
+      const r = await fetch('/api/lock/request-otp', {method:'POST'});
+      if (r.status === 401) { location.href = '/login'; return; }
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || !j.ok) {
+        setMsg(j.error || 'Không gửi được OTP. Kiểm tra Cài đặt Telegram.', 'gate-err');
+        btnReq.disabled = false; btnReq.textContent = 'Gửi OTP qua Telegram';
+        return;
+      }
+      otpRequested = true;
+      otp.disabled = false; otp.focus();
+      btnVer.disabled = false;
+      btnReq.disabled = false; btnReq.textContent = 'Gửi lại OTP';
+      const ttl = Math.round((j.ttl_seconds||300)/60);
+      setMsg('OTP đã gửi. Hết hạn sau ' + ttl + ' phút.', 'gate-ok');
+    } catch (e) {
+      setMsg('Lỗi mạng: ' + e.message, 'gate-err');
+      btnReq.disabled = false; btnReq.textContent = 'Gửi OTP qua Telegram';
+    }
+  };
+
+  window.gateVerify = async function(){
+    if (!otpRequested) { setMsg('Hãy bấm "Gửi OTP" trước.', 'gate-err'); return; }
+    const code = (otp.value||'').trim();
+    if (!code) { setMsg('Nhập OTP', 'gate-err'); otp.focus(); return; }
+    btnVer.disabled = true;
+    setMsg('Đang xác thực...', '');
+    try {
+      const r = await fetch('/api/lock/verify-otp', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({otp: code})
+      });
+      if (r.status === 401) {
+        const j = await r.json().catch(()=>({}));
+        setMsg(j.error || 'OTP không đúng', 'gate-err');
+        otp.value = ''; otp.focus();
+        btnVer.disabled = false;
+        return;
+      }
+      const j = await r.json();
+      if (j.ok) {
+        setMsg('Mở khoá thành công, đang chuyển hướng...', 'gate-ok');
+        // Drop the sessionStorage idle-lock so the dashboard doesn't immediately
+        // re-lock on arrival. The market_gate cookie was already cleared by the
+        // verify-otp response.
+        try { sessionStorage.removeItem('fbc_locked'); } catch(_){}
+        location.href = '/';
+      } else {
+        setMsg(j.error || 'OTP không đúng', 'gate-err');
+        otp.value = ''; otp.focus();
+        btnVer.disabled = false;
+      }
+    } catch (e) {
+      setMsg('Lỗi mạng: ' + e.message, 'gate-err');
+      btnVer.disabled = false;
+    }
+  };
+})();
+</script>
+</body>
+</html>

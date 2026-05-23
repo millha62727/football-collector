@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chi tiết trận đấu — Football Dashboard</title>
+<style>
+:root{
+  --bg:#0d1117;--surface:#161b22;--card:#21262d;--border:#30363d;
+  --primary:#58a6ff;--pdim:#1f3a5f;
+  --red:#f85149;--green:#3fb950;--orange:#d29922;--purple:#bc8cff;
+  --text:#c9d1d9;--muted:#8b949e;--r:6px;
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10000}
+.hdr-back{color:var(--primary);text-decoration:none;font-size:14px;font-weight:600;padding:5px 10px;border-radius:var(--r);border:1px solid var(--border);transition:all .15s}
+.hdr-back:hover{background:var(--card);border-color:var(--primary)}
+.hdr-title{font-size:15px;font-weight:700;color:var(--text);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn-sm{padding:5px 12px;border-radius:var(--r);border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-size:12px;transition:all .15s}
+.btn-sm:hover{border-color:var(--primary);color:var(--primary)}
+.btn-sm.danger:hover{border-color:var(--red);color:var(--red)}
+
+.main{flex:1;padding:24px;max-width:1100px;margin:0 auto;width:100%}
+
+.snap{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:22px;margin-bottom:22px}
+.snap-comp{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px}
+.snap-main{display:flex;align-items:center;gap:18px;margin-bottom:14px}
+.snap-team{flex:1;font-size:22px;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.snap-team.away{text-align:right}
+.snap-score{font-size:36px;font-weight:800;color:var(--red);min-width:120px;text-align:center;letter-spacing:1px}
+.snap-meta{display:flex;gap:14px;font-size:13px;color:var(--muted);margin-bottom:14px;flex-wrap:wrap}
+.snap-meta b{color:var(--text);font-weight:600}
+.snap-odds{display:flex;gap:10px;flex-wrap:wrap}
+.chip{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:5px 10px;font-size:12px}
+.chip b{color:var(--primary)}
+.chip-label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-right:4px}
+
+.badge{display:inline-block;padding:3px 9px;border-radius:3px;font-size:11px;font-weight:700;letter-spacing:.4px}
+.b-live{background:rgba(248,81,73,.2);color:var(--red);border:1px solid rgba(248,81,73,.35)}
+.b-up{background:rgba(210,153,34,.2);color:var(--orange);border:1px solid rgba(210,153,34,.35)}
+.b-ft{background:rgba(63,185,80,.2);color:var(--green);border:1px solid rgba(63,185,80,.35)}
+.b-ht{background:rgba(188,140,255,.2);color:var(--purple);border:1px solid rgba(188,140,255,.35)}
+.b-x{background:rgba(139,148,158,.15);color:var(--muted);border:1px solid var(--border)}
+
+.sec{margin-bottom:24px}
+.sec-hdr{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.sec-title{font-size:14px;font-weight:700;letter-spacing:.3px}
+.sec-badge{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:2px 8px;font-size:11px;color:var(--muted)}
+
+.twrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px;min-width:600px}
+th{background:var(--surface);padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap;font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,.025)}
+.diff-up{color:var(--green)}
+.diff-down{color:var(--red)}
+
+.tline{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:8px}
+.tev{display:flex;gap:14px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px}
+.tev:last-child{border-bottom:none}
+.tev-time{color:var(--muted);font-size:11px;font-family:'Consolas','Monaco',monospace;min-width:72px}
+.tev-min{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:2px 7px;font-size:11px;color:var(--orange);font-weight:700;min-width:42px;text-align:center}
+.tev-type{font-weight:700;min-width:90px}
+.tev-type.goal{color:var(--red)}
+.tev-type.status{color:var(--purple)}
+.tev-detail{color:var(--text);flex:1}
+
+.empty{color:var(--muted);padding:24px;text-align:center;font-size:13px;background:var(--card);border:1px solid var(--border);border-radius:var(--r)}
+.notfound{text-align:center;padding:60px 20px}
+.notfound h2{font-size:20px;margin-bottom:10px}
+.notfound p{color:var(--muted);margin-bottom:20px}
+.notfound a{color:var(--primary);text-decoration:none;font-weight:600}
+.notfound a:hover{text-decoration:underline}
+.toast{position:fixed;bottom:20px;right:20px;background:#3d1e20;border:1px solid var(--red);border-radius:var(--r);padding:12px 16px;color:var(--red);font-size:13px;display:none;z-index:999}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <a class="hdr-back" href="/">&larr; Quay lại</a>
+  <div class="hdr-title" id="hdrTitle">Đang tải…</div>
+  <a class="btn-sm" id="analyzeBtn" href="#" style="text-decoration:none">🔍 Phân tích</a>
+  <button class="btn-sm" onclick="goDisguise()">🔄 Đổi</button>
+  <form method="post" action="/logout" style="margin:0">
+    <button class="btn-sm danger" type="submit">Đăng xuất</button>
+  </form>
+</header>
+
+<div class="main" id="main">
+  <div class="empty">Đang tải dữ liệu trận đấu…</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const matchId = {{ match_id_json | safe }};
+
+function fmt(utcStr){
+  if(!utcStr) return '—';
+  return new Date(utcStr).toLocaleString('vi-VN',{
+    month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',
+    timeZone:'Asia/Ho_Chi_Minh'
+  });
+}
+function fmtTime(utcStr){
+  if(!utcStr) return '—';
+  return new Date(utcStr).toLocaleTimeString('vi-VN',{
+    hour:'2-digit',minute:'2-digit',second:'2-digit',
+    timeZone:'Asia/Ho_Chi_Minh'
+  });
+}
+// In-half time: 1H:31, 2H:15 (m-45), HT, INJURY_TIME_H2 -> 2H:45+, FT
+function fmtInHalf(r){
+  if(!r) return '—';
+  const s = (r.status||'').toUpperCase();
+  const m = r.minute;
+  if (s === 'FT') return 'FT';
+  if (s === 'HT') return 'HT';
+  if (s === 'INJURY_TIME_H1') return '1H:45+';
+  if (s === 'INJURY_TIME_H2') return '2H:45+';
+  if (s === 'H1') return '1H:' + (m != null ? m : '');
+  if (s === 'H2') return '2H:' + (m != null ? Math.max(0, m - 45) : '');
+  if (s === 'LIVE' && m != null) return (m <= 45 ? '1H:' + m : '2H:' + (m - 45));
+  if (s === 'UPCOMING' || m == null) return '—';
+  return s;
+}
+function badge(s){
+  const live=['LIVE','H1','H2','INJURY_TIME_H1','INJURY_TIME_H2'];
+  if(live.includes(s)) return '<span class="badge b-live">'+s+'</span>';
+  if(s==='HT') return '<span class="badge b-ht">HT</span>';
+  if(s==='UPCOMING') return '<span class="badge b-up">UPCOMING</span>';
+  if(s==='FT') return '<span class="badge b-ft">FT</span>';
+  return '<span class="badge b-x">'+s+'</span>';
+}
+function escHtml(s){
+  if(s==null) return '';
+  return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function showToast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.style.display='block';
+  setTimeout(()=>{t.style.display='none';},3500);
+}
+
+async function apiFetch(url){
+  try{
+    const r=await fetch(url);
+    if(r.status===401){location.href='/login';return null;}
+    if(r.status===404) return {__notfound:true};
+    return r.ok?r.json():null;
+  }catch(e){
+    showToast('Loi ket noi: '+e.message);
+    return null;
+  }
+}
+
+function renderNotFound(){
+  document.getElementById('hdrTitle').textContent='Không tìm thấy';
+  document.getElementById('main').innerHTML =
+    '<div class="notfound"><h2>Không tìm thấy trận đấu</h2>'+
+    '<p>Trận đấu này có thể đã bị xóa hoặc ID không hợp lệ.</p>'+
+    '<a href="/">← Về dashboard</a></div>';
+}
+
+function renderSnapshot(m){
+  document.getElementById('hdrTitle').textContent = m.home+' vs '+m.away;
+  const min = m.status==='HT' ? 'HT' : (m.minute ? m.minute+"'" : '—');
+  const ouChip = m.ou_line
+    ? '<div class="chip"><span class="chip-label">OU</span><b>'+m.ou_line+'</b> O '+(m.over_odds||'?')+' / U '+(m.under_odds||'?')+'</div>'
+    : '';
+  const hcChip = m.home_handicap
+    ? '<div class="chip"><span class="chip-label">HC</span>'+escHtml(m.home_handicap)+' @'+(m.home_handicap_odds||'?')+' / '+escHtml(m.away_handicap)+' @'+(m.away_handicap_odds||'?')+'</div>'
+    : '';
+  const x2Chip = m.odds_1
+    ? '<div class="chip"><span class="chip-label">1X2</span><b>'+m.odds_1+'</b> / '+(m.odds_x||'?')+' / <b>'+m.odds_2+'</b></div>'
+    : '';
+  return ''+
+    '<div class="snap">'+
+      '<div class="snap-comp">'+escHtml(m.competition)+'</div>'+
+      '<div class="snap-main">'+
+        '<div class="snap-team">'+escHtml(m.home)+'</div>'+
+        '<div class="snap-score">'+m.home_score+' - '+m.away_score+'</div>'+
+        '<div class="snap-team away">'+escHtml(m.away)+'</div>'+
+      '</div>'+
+      '<div class="snap-meta">'+
+        '<span>Trạng thái: '+badge(m.status)+'</span>'+
+        '<span>Phút: <b>'+min+'</b></span>'+
+        '<span>Bắt đầu: <b>'+fmt(m.start_time_utc)+'</b></span>'+
+      '</div>'+
+      (ouChip||hcChip||x2Chip ? '<div class="snap-odds">'+ouChip+hcChip+x2Chip+'</div>' : '')+
+    '</div>';
+}
+
+function fmtCell(v){return v==null?'—':v;}
+function diff(curr,prev){
+  if(curr==null||prev==null||curr===prev) return '';
+  return curr>prev?' diff-up':' diff-down';
+}
+
+function renderOddsHistory(rows){
+  const count = rows.length;
+  let html = '<div class="sec"><div class="sec-hdr">'+
+    '<span class="sec-title">📊 Biến động kèo</span>'+
+    '<span class="sec-badge">'+count+'</span></div>';
+  if(!count){
+    html += '<div class="empty">Chưa ghi nhận biến động</div></div>';
+    return html;
+  }
+  html += '<div class="twrap"><table><thead><tr>'+
+    '<th>Thời gian (hiệp)</th>'+
+    '<th>HC nhà</th><th>HC khách</th>'+
+    '<th>OU</th><th>Over</th><th>Under</th>'+
+    '<th>1</th><th>X</th><th>2</th>'+
+    '</tr></thead><tbody>';
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i];
+    const p=i>0?rows[i-1]:null;
+    html += '<tr>'+
+      '<td style="color:var(--muted)">'+fmtInHalf(r)+'</td>'+
+      '<td>'+escHtml(fmtCell(r.home_handicap))+' <span class="'+(p?diff(r.home_handicap_odds,p.home_handicap_odds):'').trim()+'">@'+fmtCell(r.home_handicap_odds)+'</span></td>'+
+      '<td>'+escHtml(fmtCell(r.away_handicap))+' <span class="'+(p?diff(r.away_handicap_odds,p.away_handicap_odds):'').trim()+'">@'+fmtCell(r.away_handicap_odds)+'</span></td>'+
+      '<td>'+escHtml(fmtCell(r.ou_line))+'</td>'+
+      '<td class="'+(p?diff(r.over_odds,p.over_odds):'').trim()+'">'+fmtCell(r.over_odds)+'</td>'+
+      '<td class="'+(p?diff(r.under_odds,p.under_odds):'').trim()+'">'+fmtCell(r.under_odds)+'</td>'+
+      '<td class="'+(p?diff(r.odds_1,p.odds_1):'').trim()+'">'+fmtCell(r.odds_1)+'</td>'+
+      '<td class="'+(p?diff(r.odds_x,p.odds_x):'').trim()+'">'+fmtCell(r.odds_x)+'</td>'+
+      '<td class="'+(p?diff(r.odds_2,p.odds_2):'').trim()+'">'+fmtCell(r.odds_2)+'</td>'+
+      '</tr>';
+  }
+  html += '</tbody></table></div></div>';
+  return html;
+}
+
+function renderEvents(rows){
+  const count=rows.length;
+  let html = '<div class="sec"><div class="sec-hdr">'+
+    '<span class="sec-title">⏱ Diễn biến trận</span>'+
+    '<span class="sec-badge">'+count+'</span></div>';
+  if(!count){
+    html += '<div class="empty">Chưa ghi nhận sự kiện</div></div>';
+    return html;
+  }
+  html += '<div class="tline">';
+  for(const e of rows){
+    const typeCls = e.event_type==='GOAL'?'goal':(e.event_type==='STATUS_CHANGE'?'status':'');
+    const typeLabel = e.event_type==='GOAL'?'⚽ Bàn thắng':(e.event_type==='STATUS_CHANGE'?'🔁 Trạng thái':e.event_type);
+    const min = e.minute ? e.minute+"'" : '—';
+    html += '<div class="tev">'+
+      '<span class="tev-time">'+fmtTime(e.occurred_at)+'</span>'+
+      '<span class="tev-min">'+min+'</span>'+
+      '<span class="tev-type '+typeCls+'">'+typeLabel+'</span>'+
+      '<span class="tev-detail">'+escHtml(e.detail||'')+' &nbsp;<span style="color:var(--muted)">('+(e.home_score!=null?e.home_score:'?')+'-'+(e.away_score!=null?e.away_score:'?')+')</span></span>'+
+      '</div>';
+  }
+  html += '</div></div>';
+  return html;
+}
+
+async function load(){
+  const [m, odds, events] = await Promise.all([
+    apiFetch('/api/matches/'+encodeURIComponent(matchId)),
+    apiFetch('/api/matches/'+encodeURIComponent(matchId)+'/odds-history'),
+    apiFetch('/api/matches/'+encodeURIComponent(matchId)+'/events'),
+  ]);
+  if(!m||m.__notfound){renderNotFound();return;}
+  document.getElementById('analyzeBtn').href = '/analyzer?match_id=' + encodeURIComponent(matchId);
+  document.getElementById('main').innerHTML =
+    renderSnapshot(m) +
+    renderOddsHistory(odds||[]) +
+    renderEvents(events||[]);
+}
+
+load();
+setInterval(load, 12000);
+</script>
+{% include '_lock_overlay.html' %}
+<script src="/static/lock.js"></script>
+</body>
+</html>

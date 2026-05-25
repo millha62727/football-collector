@@ -1220,9 +1220,15 @@ def search_matches(q: str = "", date_from: str = "", date_to: str = "", status: 
         filters = [_EXCLUDE_COMP_SQL]
         params: list = list(_EXCLUDE_COMP_PATTERNS)
         if q:
-            filters.append("(home ILIKE %s OR away ILIKE %s OR competition ILIKE %s)")
-            p = f"%{q}%"
-            params += [p, p, p]
+            # Split into whitespace tokens — each token must match at least one
+            # of (home, away, competition). This makes "Ngoại hạng Anh Brighton"
+            # match a Brighton match in the EPL, instead of demanding the whole
+            # string appear in a single column.
+            tokens = [t for t in q.split() if t]
+            for tok in tokens:
+                filters.append("(home ILIKE %s OR away ILIKE %s OR competition ILIKE %s)")
+                p = f"%{tok}%"
+                params += [p, p, p]
         if date_from:
             filters.append("start_time_utc >= %s")
             params.append(date_from)

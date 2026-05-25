@@ -279,6 +279,15 @@ def init_db() -> None:
             with _connect() as conn:
                 cur = conn.cursor()
 
+                # Accent-insensitive search support — unaccent('Ngoại') = 'Ngoai'.
+                # Idempotent. Requires superuser the FIRST time only; ignored
+                # afterwards. If the role lacks privilege we degrade gracefully:
+                # search_matches() falls back to plain ILIKE.
+                try:
+                    cur.execute("CREATE EXTENSION IF NOT EXISTS unaccent")
+                except Exception as _ext_exc:  # noqa: BLE001
+                    print(f"[init_db] unaccent extension unavailable: {_ext_exc!r}", flush=True)
+
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS matches (
                         id                  TEXT PRIMARY KEY,
@@ -1214,19 +1223,52 @@ def get_match_events(match_id: str, limit: int = 200) -> list[dict[str, Any]]:
         return [_iso(dict(r), "occurred_at") for r in cur.fetchall()]
 
 
+def _has_unaccent() -> bool:
+    """Cached probe — does this DB have the unaccent extension installed?
+
+    Determined once per process; the result is cached on the function itself.
+    Lets `search_matches` pick the right WHERE clause without paying a catalog
+    lookup on every search.
+    """
+    cached = getattr(_has_unaccent, "_cache", None)
+    if cached is not None:
+        return cached
+    try:
+        with _connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM pg_extension WHERE extname = 'unaccent'")
+            cached = cur.fetchone() is not None
+    except Exception:  # noqa: BLE001
+        cached = False
+    _has_unaccent._cache = cached  # type: ignore[attr-defined]
+    return cached
+
+
 def search_matches(q: str = "", date_from: str = "", date_to: str = "", status: str = "", limit: int = 300) -> list[dict]:
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         filters = [_EXCLUDE_COMP_SQL]
         params: list = list(_EXCLUDE_COMP_PATTERNS)
         if q:
-            # Split into whitespace tokens — each token must match at least one
-            # of (home, away, competition). This makes "Ngoại hạng Anh Brighton"
-            # match a Brighton match in the EPL, instead of demanding the whole
-            # string appear in a single column.
+            # Accent-insensitive search — Yêu cầu: gõ "ngoai hang anh" phải khớp
+            # "Ngoại hạng Anh". Wrap cả column lẫn pattern bằng unaccent() khi
+            # extension có sẵn; nếu không, degrade về ILIKE thuần (vẫn hoạt
+            # động cho nội dung không dấu).
+            #
+            # Tokens được AND lại — mỗi token phải match ít nhất một trong
+            # (home, away, competition). "ngoai hang anh brighton" khớp một
+            # trận Brighton ở EPL.
             tokens = [t for t in q.split() if t]
+            use_ua = _has_unaccent()
             for tok in tokens:
-                filters.append("(home ILIKE %s OR away ILIKE %s OR competition ILIKE %s)")
+                if use_ua:
+                    filters.append(
+                        "(unaccent(home) ILIKE unaccent(%s) "
+                        "OR unaccent(away) ILIKE unaccent(%s) "
+                        "OR unaccent(competition) ILIKE unaccent(%s))"
+                    )
+                else:
+                    filters.append("(home ILIKE %s OR away ILIKE %s OR competition ILIKE %s)")
                 p = f"%{tok}%"
                 params += [p, p, p]
         if date_from:

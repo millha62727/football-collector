@@ -1160,6 +1160,91 @@ def get_match_by_id(match_id: str) -> Optional[dict[str, Any]]:
     return dict(row) if row else None
 
 
+# ---------------------------------------------------------------------------
+# Layer 3 mutate ops (Sửa / Xóa) — Yêu cầu Data Browser
+# ---------------------------------------------------------------------------
+
+# Whitelist of columns the UI may patch on `match_odds_history`. Anything else
+# (id, match_id, captured_at) is server-owned and never accepts user input.
+_ODDS_HIST_WRITABLE = (
+    "home_handicap", "home_handicap_odds",
+    "away_handicap", "away_handicap_odds",
+    "ou_line", "over_odds", "under_odds",
+    "odds_1", "odds_x", "odds_2",
+    "minute", "home_score", "away_score", "status",
+)
+
+
+def update_odds_history_rows(match_id: str, edits: list[dict]) -> int:
+    """Bulk-update odds-history rows for a single match.
+
+    Each edit is `{id: int, <field>: value, ...}`. Only whitelisted columns
+    are accepted; numeric fields are coerced; empty strings → NULL. The match
+    scope is enforced server-side so a leaked id from another match cannot
+    overwrite it.
+    """
+    if not edits:
+        return 0
+
+    def _coerce(field: str, raw):
+        if raw is None:
+            return None
+        s = str(raw).strip()
+        if s == "" or s == "—":
+            return None
+        if field in ("home_handicap_odds", "away_handicap_odds",
+                     "over_odds", "under_odds", "odds_1", "odds_x", "odds_2"):
+            try:
+                return float(s)
+            except ValueError:
+                return None
+        if field in ("minute", "home_score", "away_score"):
+            try:
+                return int(float(s))
+            except ValueError:
+                return None
+        return s  # text columns: handicap strings, ou_line, status
+
+    affected = 0
+    with _connect() as conn:
+        cur = conn.cursor()
+        for e in edits:
+            raw_id = e.get("id")
+            if raw_id is None:
+                continue
+            try:
+                row_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            sets, params = [], []
+            for f in _ODDS_HIST_WRITABLE:
+                if f in e:
+                    sets.append(f"{f} = %s")
+                    params.append(_coerce(f, e[f]))
+            if not sets:
+                continue
+            params.extend([row_id, match_id])
+            cur.execute(
+                f"UPDATE match_odds_history SET {', '.join(sets)} "
+                f"WHERE id = %s AND match_id = %s",
+                params,
+            )
+            affected += cur.rowcount or 0
+    return affected
+
+
+def delete_match(match_id: str) -> bool:
+    """Delete a match. FK ON DELETE CASCADE removes odds_history, events,
+    goals, alert_log; analyzer_sessions are independent (kept).
+
+    Returns True if a row was actually deleted.
+    """
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM matches WHERE id = %s", (match_id,))
+        return (cur.rowcount or 0) > 0
+
+
 def _iso(row: dict, *fields: str) -> dict:
     for f in fields:
         v = row.get(f)
@@ -1283,7 +1368,28 @@ def search_matches(q: str = "", date_from: str = "", date_to: str = "", status: 
         where = "WHERE " + " AND ".join(filters)
         params.append(limit)
         cur.execute(f"SELECT id,competition,home,away,start_time_utc,status,minute,home_score,away_score FROM matches {where} ORDER BY start_time_utc DESC LIMIT %s", params)
-        return [dict(r) for r in cur.fetchall()]
+        rows = [dict(r) for r in cur.fetchall()]
+
+        # Attach goal sequence for sidebar transition display.
+        # +Bàn k: HC before→after · OU before→after — Yêu cầu Data Browser.
+        if rows:
+            ids = [r["id"] for r in rows]
+            cur.execute(
+                """
+                SELECT match_id, goal_number, team, minute,
+                       hc_before, hc_after, ou_before, ou_after
+                  FROM match_goals
+                 WHERE match_id = ANY(%s)
+                 ORDER BY match_id, goal_number
+                """,
+                (ids,),
+            )
+            goals_by: dict[str, list[dict]] = {}
+            for g in cur.fetchall():
+                goals_by.setdefault(g["match_id"], []).append(dict(g))
+            for r in rows:
+                r["goals"] = goals_by.get(r["id"], [])
+        return rows
 
 
 def _norm_match_str(v) -> Optional[str]:

@@ -98,6 +98,28 @@ table.ot tr:hover td{background:rgba(255,255,255,.02)}
 .scroll-toggle .dot{width:16px;height:16px;border-radius:50%;background:var(--border);transition:all .15s;position:relative}
 .scroll-toggle.on .dot{background:var(--primary)}
 .split-pane{max-height:calc(100vh - 200px);overflow-y:auto}
+
+/* ---- Sidebar goal-transition lines ---- */
+.smatch-goals{margin-top:6px;padding-top:6px;border-top:1px dashed rgba(255,255,255,.06);display:flex;flex-direction:column;gap:2px}
+.smatch-goal{font-size:10.5px;line-height:1.35;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---- Inline edit cells ---- */
+table.ot td.edit{padding:2px}
+table.ot td.edit input{width:100%;min-width:50px;padding:4px 5px;background:#0d1117;border:1px solid var(--primary);border-radius:3px;color:var(--text);font-size:11px;font-variant-numeric:tabular-nums;text-align:center;font-family:inherit}
+table.ot td.edit input:focus{outline:none;border-color:var(--orange);background:#161b22}
+.btn-orange{border-color:var(--orange);color:var(--orange);background:rgba(210,153,34,.1)}
+.btn-orange:hover{background:var(--orange);color:#000}
+.btn-red{border-color:var(--red);color:var(--red);background:rgba(248,81,73,.08)}
+.btn-red:hover{background:var(--red);color:#fff}
+.btn.is-active{background:var(--primary);color:#000;border-color:var(--primary)}
+
+/* ---- Confirm popup (Xóa) ---- */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:300;display:none;align-items:center;justify-content:center}
+.modal-bg.show{display:flex}
+.modal-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px 20px;width:420px;max-width:92vw}
+.modal-card h3{margin:0 0 8px;font-size:14px;color:var(--red)}
+.modal-card p{font-size:12px;color:var(--text);margin:0 0 14px;line-height:1.5}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end}
 </style>
 </head>
 <body>
@@ -155,6 +177,7 @@ table.ot tr:hover td{background:rgba(255,255,255,.02)}
               <div class="adv-cell"><label>B&#xE0;n 5</label><input id="advOuB5"></div>
               <div class="adv-cell"><label>B&#xE0;n 6</label><input id="advOuB6"></div>
               <div class="adv-cell"><label>B&#xE0;n 7</label><input id="advOuB7"></div>
+              <div class="adv-cell"><label>B&#xE0;n 8</label><input id="advOuB8"></div>
             </div>
           </div>
           <div class="adv-col">
@@ -167,6 +190,7 @@ table.ot tr:hover td{background:rgba(255,255,255,.02)}
               <div class="adv-cell"><label>B&#xE0;n 5</label><input id="advHcA5"></div>
               <div class="adv-cell"><label>B&#xE0;n 6</label><input id="advHcA6"></div>
               <div class="adv-cell"><label>B&#xE0;n 7</label><input id="advHcA7"></div>
+              <div class="adv-cell"><label>B&#xE0;n 8</label><input id="advHcA8"></div>
             </div>
           </div>
         </div>
@@ -199,6 +223,18 @@ table.ot tr:hover td{background:rgba(255,255,255,.02)}
   </div>
 </div>
 
+<!-- Delete confirm popup -->
+<div id="delConfirmBg" class="modal-bg" onclick="if(event.target===this)closeDeleteConfirm()">
+  <div class="modal-card">
+    <h3>&#x26A0; X&#xE1;c nh&#x1EAD;n x&#xF3;a tr&#x1EAD;n</h3>
+    <p id="delConfirmText"></p>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeDeleteConfirm()">H&#x1EE7;y</button>
+      <button class="btn btn-red" onclick="doDelete()">&#x1F5D1; X&#xF3;a</button>
+    </div>
+  </div>
+</div>
+
 {% include '_lock_overlay.html' %}
 <div class="toast" id="toast"></div>
 <script>
@@ -213,6 +249,75 @@ function badge(s){const live=['LIVE','H1','H2'];if(live.includes(s))return '<spa
 function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2800);}
 async function apiFetch(url){try{const r=await fetch(url);if(r.status===401){location.href='/login';return null;}return r.ok?r.json():null;}catch(e){showToast('L\\u1ed7i: '+e.message);return null;}}
 
+// Per-goal transition lines for the sidebar — Yêu cầu Data Browser:
+//   +Bàn k: HC <after> → <before> · OU <after> → <before>
+// Mockup writes "Afterhandicap->beforeHandicap" / "AfterOU->BeoforeOU".
+// Render at most the first 3 goals to keep the row compact.
+function renderGoalTransitions(goals){
+  if (!goals || !goals.length) return '';
+  const cap = goals.slice(0, 3);
+  const dash = '\\u2014';
+  const arrow = ' \\u2192 ';
+  const lines = cap.map(g => {
+    const hc = '<span style="color:var(--orange)">HC '+escHtml(g.hc_after||dash)+arrow+escHtml(g.hc_before||dash)+'</span>';
+    const ou = '<span style="color:var(--purple)">OU '+escHtml(g.ou_after||dash)+arrow+escHtml(g.ou_before||dash)+'</span>';
+    return '<div class="smatch-goal">+B\\u00e0n'+g.goal_number+' '+hc+' \\u00b7 '+ou+'</div>';
+  });
+  if (goals.length > cap.length) {
+    lines.push('<div class="smatch-goal" style="color:var(--muted)">+'+(goals.length-cap.length)+' b\\u00e0n n\\u1eefa\\u2026</div>');
+  }
+  return '<div class="smatch-goals">' + lines.join('') + '</div>';
+}
+
+function renderSidebarItem(m){
+  const clsA = selectedA && selectedA.id===m.id ? ' sel' : '';
+  const clsB = selectedB && selectedB.id===m.id ? ' cmp' : '';
+  return '<div class="smatch'+clsA+clsB+'" data-id="'+escHtml(m.id)+'">' +
+    '<div class="smatch-teams">'+escHtml(m.home)+' <span class="smatch-score">'+m.home_score+'-'+m.away_score+'</span> '+escHtml(m.away)+'</div>' +
+    '<div class="smatch-meta"><span>'+badge(m.status)+'</span><span>'+escHtml((m.competition||'').substring(0,25))+'</span><span>'+fmt(m.start_time_utc)+'</span></div>' +
+    renderGoalTransitions(m.goals) +
+    '</div>';
+}
+
+// Sidebar event delegation — single click selects A, double click selects B
+// for compare. Avoids the inline-escape JS quoting hell of onclick="foo('id')"
+// that broke older versions.
+(function attachSidebarDelegation(){
+  const sl = document.getElementById('slist');
+  if (!sl || sl._delegationAttached) return;
+  sl._delegationAttached = true;
+  sl.addEventListener('click', ev => {
+    const card = ev.target.closest('.smatch'); if (!card) return;
+    const id = card.dataset.id; if (!id) return;
+    selectMatch(id);
+  });
+  sl.addEventListener('dblclick', ev => {
+    const card = ev.target.closest('.smatch'); if (!card) return;
+    const id = card.dataset.id; if (!id) return;
+    handleSidebarDblClick(id);
+  });
+  sl.addEventListener('contextmenu', ev => {
+    const card = ev.target.closest('.smatch'); if (!card) return;
+    ev.preventDefault();
+    const id = card.dataset.id; if (!id) return;
+    handleSidebarDblClick(id);
+  });
+})();
+
+async function handleSidebarDblClick(id){
+  const m = matches_cache[id]; if (!m) return;
+  if (selectedA && selectedA.id === id) return;
+  if (selectedB && selectedB.id === id) {
+    selectedB = null; updateSidebarSel();
+    if (selectedA) await renderDetail(selectedA.id, 'A');
+    return;
+  }
+  if (!selectedA) { selectMatch(id); return; }
+  if (!(await maybeFlushEdits('switch'))) return;
+  selectedB = m; updateSidebarSel();
+  await renderSplit();
+}
+
 async function doSearch() {
   const q = document.getElementById('sqText').value;
   const from_ = document.getElementById('sqFrom').value;
@@ -224,14 +329,7 @@ async function doSearch() {
   if (!data || !data.length) {
     sl.innerHTML = '<div class="smatch-empty">Kh\\u00f4ng t\\u00ecm th\\u1ea5y tr\\u1eadn n\\u00e0o</div>'; return;
   }
-  sl.innerHTML = data.map(m => {
-    const clsA = selectedA && selectedA.id===m.id ? ' sel' : '';
-    const clsB = selectedB && selectedB.id===m.id ? ' cmp' : '';
-    return '<div class="smatch'+clsA+clsB+'" onclick="selectMatch(\\'' + escHtml(m.id) + '\\')" data-id="'+escHtml(m.id)+'">' +
-      '<div class="smatch-teams">'+escHtml(m.home)+' <span class="smatch-score">'+m.home_score+'-'+m.away_score+'</span> '+escHtml(m.away)+'</div>' +
-      '<div class="smatch-meta"><span>'+badge(m.status)+'</span><span>'+escHtml((m.competition||'').substring(0,25))+'</span><span>'+fmt(m.start_time_utc)+'</span></div>' +
-      '</div>';
-  }).join('');
+  sl.innerHTML = data.map(renderSidebarItem).join('');
   data.forEach(m => matches_cache[m.id] = m);
 }
 
@@ -240,10 +338,40 @@ document.getElementById('sqText').addEventListener('keydown', e => { if(e.key===
 async function selectMatch(id) {
   const m = matches_cache[id];
   if (!m) return;
+  if (!(await maybeFlushEdits('switch'))) return;
   selectedA = m;
   updateSidebarSel();
   await renderDetail(id, 'A');
 }
+
+// ---- Sidebar click handlers (Yêu cầu: dblclick = compare slot) ----
+window.onSidebarClick = function(id){ selectMatch(id); };
+
+window.onSidebarDblClick = async function(id){
+  const m = matches_cache[id];
+  if (!m) return;
+  // Double-click on the same item already selected as A: clear and re-select.
+  if (selectedA && selectedA.id === id) return;
+  // Toggle B: clicking an existing B clears it.
+  if (selectedB && selectedB.id === id) {
+    selectedB = null; updateSidebarSel();
+    if (selectedA) await renderDetail(selectedA.id, 'A');
+    return;
+  }
+  if (!selectedA) {
+    // Need an A first to compare against — fall back to single-select.
+    selectMatch(id); return;
+  }
+  if (!(await maybeFlushEdits('switch'))) return;
+  selectedB = m; updateSidebarSel();
+  await renderSplit();
+};
+
+window.onSidebarRightClick = function(ev, id){
+  // Right-click as a fast path to set/clear slot B.
+  ev.preventDefault();
+  onSidebarDblClick(id);
+};
 
 async function setCompare(id) {
   const m = matches_cache[id];
@@ -263,11 +391,46 @@ function updateSidebarSel() {
   });
 }
 
+// ---- Edit / Save / Delete state (Yêu cầu Data Browser) ----
+// _editMode: 'A' | 'B' | null — which slot has the editable table
+// _editBuffer: { [oddsRowId]: { [field]: value } } — pending edits, flushed via PATCH
+let _editMode = null;
+let _editBuffer = {};
+let _editRowsById = {}; // original odds rows keyed by id (for cancel/revert + diff)
+
+function hasPendingEdits(){
+  for (const k in _editBuffer) {
+    if (Object.keys(_editBuffer[k]||{}).length) return true;
+  }
+  return false;
+}
+
+async function maybeFlushEdits(reason){
+  // reason: 'switch' (selecting another match) | 'close' (clearCompare etc.)
+  if (!_editMode || !hasPendingEdits()) {
+    _editMode = null; _editBuffer = {}; _editRowsById = {};
+    return true;
+  }
+  const ans = window.confirm('B\\u1ea1n c\\u00f3 thay \\u0111\\u1ed5i ch\\u01b0a l\\u01b0u. L\\u01b0u tr\\u01b0\\u1edbc khi chuy\\u1ec3n?');
+  if (ans) {
+    const ok = await saveEdits();
+    if (!ok) { return false; }
+  }
+  _editMode = null; _editBuffer = {}; _editRowsById = {};
+  return true;
+}
+
 async function renderDetail(id, which) {
   const oddsData = await apiFetch('/api/matches/'+encodeURIComponent(id)+'/odds-history');
   const m = matches_cache[id];
   const analyzeHref = '/analyzer?match_id='+encodeURIComponent(id);
   const csvHref = '/api/data/matches/'+encodeURIComponent(id)+'/csv';
+  const isEditing = _editMode === 'A';
+  // Cache the rows so the edit toolbar can diff & revert.
+  if (oddsData) {
+    _editRowsById = {};
+    (oddsData||[]).forEach(r => _editRowsById[r.id] = r);
+  }
   let html = '<div class="actions-bar">' +
     '<b style="font-size:14px;font-weight:700">'+escHtml(m.home)+' vs '+escHtml(m.away)+'</b>' +
     badge(m.status) +
@@ -275,8 +438,12 @@ async function renderDetail(id, which) {
     '<a href="'+analyzeHref+'" class="btn btn-green" target="_blank">&#x1F50D; Ph\\u00e2n t\\u00edch</a>' +
     '<a href="'+csvHref+'" class="btn" download>&#x2B07; CSV</a>' +
     (selectedB && which==='A' ? '' : '<button class="btn" onclick="selectCompare()">&#x2696; So s\\u00e1nh</button>') +
+    '<span style="flex:1"></span>' +
+    '<button class="btn btn-orange'+(isEditing?' is-active':'')+'" onclick="toggleEdit()">'+(isEditing?'\\u2716 H\\u1ee7y':'\\u270f S\\u1eeda')+'</button>' +
+    (isEditing ? '<button class="btn btn-green" onclick="saveEdits()">\\u2705 L\\u01b0u</button>' : '') +
+    '<button class="btn btn-red" data-act="del-current">&#x1F5D1; X\\u00f3a</button>' +
     '</div>';
-  html += renderOddsTable(oddsData||[], m.home, m.away);
+  html += renderOddsTable(oddsData||[], m.home, m.away, isEditing);
   document.getElementById('contentArea').innerHTML = html;
 }
 
@@ -306,11 +473,11 @@ async function renderSplit() {
     '<div class="split">' +
     '<div class="split-pane" id="paneA">' +
       '<div class="actions-bar"><b>'+escHtml(selectedA.home)+' vs '+escHtml(selectedA.away)+'</b>'+badge(selectedA.status)+'<a href="/api/data/matches/'+encodeURIComponent(selectedA.id)+'/csv" class="btn" download>&#x2B07; CSV</a></div>' +
-      renderOddsTable(oddsA||[], selectedA.home, selectedA.away) +
+      renderOddsTable(oddsA||[], selectedA.home, selectedA.away, false) +
     '</div>' +
     '<div class="split-pane" id="paneB">' +
       '<div class="actions-bar"><b>'+escHtml(selectedB.home)+' vs '+escHtml(selectedB.away)+'</b>'+badge(selectedB.status)+'<a href="/api/data/matches/'+encodeURIComponent(selectedB.id)+'/csv" class="btn" download>&#x2B07; CSV</a></div>' +
-      renderOddsTable(oddsB||[], selectedB.home, selectedB.away) +
+      renderOddsTable(oddsB||[], selectedB.home, selectedB.away, false) +
     '</div></div>';
   document.getElementById('contentArea').innerHTML = html;
   if (syncMode) attachScrollSync();
@@ -344,14 +511,40 @@ function toggleScrollSync(){
   if (selectedA && selectedB) renderSplit();
 }
 
-window.clearCompare = function() { selectedB=null; updateSidebarSel(); if(selectedA) renderDetail(selectedA.id,'A'); };
+window.clearCompare = async function() {
+  if (!(await maybeFlushEdits('close'))) return;
+  selectedB=null; updateSidebarSel(); if(selectedA) renderDetail(selectedA.id,'A');
+};
 
 function fmtCell(v){return v==null?'\\u2014':v;}
 function diffCls(curr,prev,f){if(curr==null||prev==null)return '';const c=parseFloat(curr),p=parseFloat(prev[f]);if(isNaN(c)||isNaN(p)||c===p)return '';return c>p?' diff-up':' diff-down';}
 
-function renderOddsTable(rows, home, away) {
+// Editable cell helper. Renders an <input> bound to _editBuffer when in edit
+// mode, otherwise plain text. We persist edits to _editBuffer as the user
+// types so the buffer is always the source of truth for saveEdits().
+function editCell(rowId, field, raw, editable) {
+  if (!editable) return fmtCell(raw);
+  const buf = _editBuffer[rowId] || {};
+  const v = (field in buf) ? buf[field] : (raw==null?'':raw);
+  return '<input type="text" data-row="'+rowId+'" data-field="'+field+'" value="'+escHtml(v)+'" oninput="onCellEdit(this)">';
+}
+function editCellNum(rowId, field, raw, editable) {
+  if (!editable) return fmtCell(raw);
+  const buf = _editBuffer[rowId] || {};
+  const v = (field in buf) ? buf[field] : (raw==null?'':raw);
+  return '<input type="text" inputmode="decimal" data-row="'+rowId+'" data-field="'+field+'" value="'+escHtml(v)+'" oninput="onCellEdit(this)">';
+}
+
+window.onCellEdit = function(inp){
+  const rowId = inp.dataset.row;
+  const field = inp.dataset.field;
+  if (!_editBuffer[rowId]) _editBuffer[rowId] = {};
+  _editBuffer[rowId][field] = inp.value;
+};
+
+function renderOddsTable(rows, home, away, editable) {
   if (!rows.length) return '<div class="panel"><div class="panel-h">&#x1F4CA; Bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o</div><div style="color:var(--muted);text-align:center;padding:24px;font-size:12px">Ch\\u01b0a c\\u00f3 d\\u1eef li\\u1ec7u</div></div>';
-  let h = '<div class="panel"><div class="panel-h">&#x1F4CA; Bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o <span style="font-size:11px;color:var(--muted);font-weight:400">('+rows.length+' snapshots)</span></div><div class="panel-b"><table class="ot"><thead><tr>' +
+  let h = '<div class="panel"><div class="panel-h">&#x1F4CA; Bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o <span style="font-size:11px;color:var(--muted);font-weight:400">('+rows.length+' snapshots'+(editable?' \\u00b7 \\u270f ch\\u1ebf \\u0111\\u1ed9 ch\\u1ec9nh s\\u1eeda':'')+')</span></div><div class="panel-b"><table class="ot"><thead><tr>' +
     '<th>Hi\\u1ec7p</th><th>Score</th><th>Ph\\u00fat</th>' +
     '<th>HC '+escHtml((home||'').split(' ')[0])+'</th><th>@</th>' +
     '<th>HC '+escHtml((away||'').split(' ')[0])+'</th><th>@</th>' +
@@ -361,25 +554,148 @@ function renderOddsTable(rows, home, away) {
   for(let i=0;i<rows.length;i++){
     const r=rows[i], p=i>0?rows[i-1]:null;
     const score=(r.home_score!=null?r.home_score:'?')+'-'+(r.away_score!=null?r.away_score:'?');
+    const ec = editable ? ' edit' : '';
     h+='<tr>'+
       '<td style="color:var(--muted)">'+fmtInHalf(r)+'</td>'+
       '<td style="font-weight:700;color:var(--red)">'+score+'</td>'+
       '<td style="color:var(--orange)">'+(r.minute?r.minute+"'":'\\u2014')+'</td>'+
-      '<td>'+escHtml(fmtCell(r.home_handicap))+'</td>'+
-      '<td class="'+(p?diffCls(r.home_handicap_odds,p,'home_handicap_odds'):'').trim()+'">'+fmtCell(r.home_handicap_odds)+'</td>'+
-      '<td>'+escHtml(fmtCell(r.away_handicap))+'</td>'+
-      '<td class="'+(p?diffCls(r.away_handicap_odds,p,'away_handicap_odds'):'').trim()+'">'+fmtCell(r.away_handicap_odds)+'</td>'+
-      '<td>'+escHtml(fmtCell(r.ou_line))+'</td>'+
-      '<td class="'+(p?diffCls(r.over_odds,p,'over_odds'):'').trim()+'">'+fmtCell(r.over_odds)+'</td>'+
-      '<td class="'+(p?diffCls(r.under_odds,p,'under_odds'):'').trim()+'">'+fmtCell(r.under_odds)+'</td>'+
-      '<td class="'+(p?diffCls(r.odds_1,p,'odds_1'):'').trim()+'">'+fmtCell(r.odds_1)+'</td>'+
-      '<td class="'+(p?diffCls(r.odds_x,p,'odds_x'):'').trim()+'">'+fmtCell(r.odds_x)+'</td>'+
-      '<td class="'+(p?diffCls(r.odds_2,p,'odds_2'):'').trim()+'">'+fmtCell(r.odds_2)+'</td>'+
+      '<td class="'+ec+'">'+editCell(r.id,'home_handicap',r.home_handicap,editable)+'</td>'+
+      '<td class="'+(p?diffCls(r.home_handicap_odds,p,'home_handicap_odds'):'').trim()+ec+'">'+editCellNum(r.id,'home_handicap_odds',r.home_handicap_odds,editable)+'</td>'+
+      '<td class="'+ec+'">'+editCell(r.id,'away_handicap',r.away_handicap,editable)+'</td>'+
+      '<td class="'+(p?diffCls(r.away_handicap_odds,p,'away_handicap_odds'):'').trim()+ec+'">'+editCellNum(r.id,'away_handicap_odds',r.away_handicap_odds,editable)+'</td>'+
+      '<td class="'+ec+'">'+editCell(r.id,'ou_line',r.ou_line,editable)+'</td>'+
+      '<td class="'+(p?diffCls(r.over_odds,p,'over_odds'):'').trim()+ec+'">'+editCellNum(r.id,'over_odds',r.over_odds,editable)+'</td>'+
+      '<td class="'+(p?diffCls(r.under_odds,p,'under_odds'):'').trim()+ec+'">'+editCellNum(r.id,'under_odds',r.under_odds,editable)+'</td>'+
+      '<td class="'+(p?diffCls(r.odds_1,p,'odds_1'):'').trim()+ec+'">'+editCellNum(r.id,'odds_1',r.odds_1,editable)+'</td>'+
+      '<td class="'+(p?diffCls(r.odds_x,p,'odds_x'):'').trim()+ec+'">'+editCellNum(r.id,'odds_x',r.odds_x,editable)+'</td>'+
+      '<td class="'+(p?diffCls(r.odds_2,p,'odds_2'):'').trim()+ec+'">'+editCellNum(r.id,'odds_2',r.odds_2,editable)+'</td>'+
       '</tr>';
   }
   h+='</tbody></table></div></div>';
   return h;
 }
+
+// ---- Content-area click delegation: Xóa + expand result rows ----
+// Avoids inline onclick attributes whose nested-quote escapes are fragile.
+(function attachContentDelegation(){
+  const ca = document.getElementById('contentArea');
+  if (!ca || ca._delegationAttached) return;
+  ca._delegationAttached = true;
+  ca.addEventListener('click', ev => {
+    const btn = ev.target.closest('[data-act]');
+    if (!btn) return;
+    const act = btn.dataset.act;
+    if (act === 'del-current') {
+      if (selectedA) confirmDelete(selectedA.id);
+      return;
+    }
+    if (act === 'expand') {
+      const mid = btn.dataset.mid;
+      if (mid) toggleExpand(mid, btn);
+      return;
+    }
+    if (act === 'sort') {
+      const f = btn.dataset.field;
+      if (f) sortResults(f);
+      return;
+    }
+    if (act === 'export-csv') { exportResults('csv'); return; }
+    if (act === 'export-txt') { exportResults('txt'); return; }
+  });
+})();
+window.toggleEdit = async function(){
+  if (!selectedA) return;
+  if (_editMode === 'A') {
+    // Cancel — if there are pending edits, ask. Mockup: "tắt thì sẽ hỏi muốn lưu không"
+    if (hasPendingEdits()) {
+      const ans = window.confirm('C\\u00f3 thay \\u0111\\u1ed5i ch\\u01b0a l\\u01b0u. L\\u01b0u kh\\u00f4ng?');
+      if (ans) {
+        const ok = await saveEdits();
+        if (!ok) return;
+      }
+    }
+    _editMode = null; _editBuffer = {};
+  } else {
+    if (selectedB) { showToast('B\\u1ecf so s\\u00e1nh tr\\u01b0\\u1edbc khi s\\u1eeda'); return; }
+    _editMode = 'A'; _editBuffer = {};
+  }
+  await renderDetail(selectedA.id, 'A');
+};
+
+window.saveEdits = async function(){
+  if (!selectedA) return false;
+  // Build the edits payload — only rows with at least one buffered field.
+  const edits = [];
+  for (const rowId in _editBuffer) {
+    const fields = _editBuffer[rowId] || {};
+    if (!Object.keys(fields).length) continue;
+    edits.push(Object.assign({id: Number(rowId)}, fields));
+  }
+  if (!edits.length) {
+    showToast('Kh\\u00f4ng c\\u00f3 thay \\u0111\\u1ed5i n\\u00e0o');
+    return true;
+  }
+  try {
+    const r = await fetch('/api/data/matches/'+encodeURIComponent(selectedA.id), {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({edits}),
+    });
+    if (r.status === 401) { location.href='/login'; return false; }
+    if (!r.ok) {
+      const txt = await r.text();
+      showToast('L\\u01b0u th\\u1ea5t b\\u1ea1i: '+txt.slice(0,120));
+      return false;
+    }
+    const j = await r.json();
+    showToast('\\u0110\\u00e3 l\\u01b0u '+j.affected+' d\\u00f2ng');
+    _editBuffer = {};
+    _editMode = null;
+    await renderDetail(selectedA.id, 'A');
+    return true;
+  } catch (e) {
+    showToast('L\\u1ed7i m\\u1ea1ng: '+e.message);
+    return false;
+  }
+};
+
+// ---- Delete confirm popup (Yêu cầu Data Browser) ----
+window.confirmDelete = function(id){
+  const m = matches_cache[id];
+  if (!m) return;
+  const txt = m.home + ' vs ' + m.away;
+  document.getElementById('delConfirmText').innerHTML =
+    'B\\u1ea1n c\\u00f3 ch\\u1eafc mu\\u1ed1n x\\u00f3a tr\\u1eadn <b>' + escHtml(txt) + '</b> kh\\u00f4ng? <br>' +
+    '<span style="color:var(--muted)">Thao t\\u00e1c n\\u00e0y x\\u00f3a c\\u1ea3 l\\u1ecbch s\\u1eed bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o, events, goals — kh\\u00f4ng th\\u1ec3 ho\\u00e0n t\\u00e1c.</span>';
+  document.getElementById('delConfirmBg').classList.add('show');
+  document.getElementById('delConfirmBg').dataset.id = id;
+};
+window.closeDeleteConfirm = function(){ document.getElementById('delConfirmBg').classList.remove('show'); };
+window.doDelete = async function(){
+  const bg = document.getElementById('delConfirmBg');
+  const id = bg.dataset.id;
+  if (!id) return;
+  try {
+    const r = await fetch('/api/data/matches/'+encodeURIComponent(id), {method:'DELETE'});
+    if (r.status === 401) { location.href='/login'; return; }
+    if (!r.ok) {
+      const t = await r.text();
+      showToast('X\\u00f3a th\\u1ea5t b\\u1ea1i: '+t.slice(0,120));
+      return;
+    }
+    showToast('\\u0110\\u00e3 x\\u00f3a tr\\u1eadn');
+    closeDeleteConfirm();
+    // Clear local state & refresh sidebar.
+    if (selectedA && selectedA.id === id) selectedA = null;
+    if (selectedB && selectedB.id === id) selectedB = null;
+    delete matches_cache[id];
+    _editMode = null; _editBuffer = {};
+    document.getElementById('contentArea').innerHTML = '<div class="empty">&larr; Ch\\u1ecdn m\\u1ed9t tr\\u1eadn \\u0111\\u1ec3 xem chi ti\\u1ebft</div>';
+    await doSearch();
+  } catch (e) {
+    showToast('L\\u1ed7i m\\u1ea1ng: '+e.message);
+  }
+};
 
 function toggleAdv(){
   const p = document.getElementById('advPanel');
@@ -388,7 +704,7 @@ function toggleAdv(){
 }
 function resetAdv(){
   ['advOpenHc','advOpenOu'].forEach(id => document.getElementById(id).value = '');
-  for (let n=1;n<=7;n++){ document.getElementById('advOuB'+n).value=''; document.getElementById('advHcA'+n).value=''; }
+  for (let n=1;n<=8;n++){ document.getElementById('advOuB'+n).value=''; document.getElementById('advHcA'+n).value=''; }
 }
 
 let advLastResults = [];
@@ -403,7 +719,7 @@ async function doAdvancedSearch(){
     hc_after_goal: {},
     limit: 300,
   };
-  for (let n=1;n<=7;n++){
+  for (let n=1;n<=8;n++){
     const ou = document.getElementById('advOuB'+n).value.trim();
     if (ou) payload.ou_before_goal[String(n)] = ou;
     const hc = document.getElementById('advHcA'+n).value.trim();
@@ -438,8 +754,8 @@ function renderResults(elapsedMs){
     '<span><b>'+rows.length+'</b> k\\u1ebft qu\\u1ea3</span>' +
     (elapsedMs!=null?'<span>· '+elapsedMs+' ms</span>':'') +
     '<span class="spacer"></span>' +
-    '<button class="btn" onclick="exportResults(\\'csv\\')">&#x2B07; CSV</button>' +
-    '<button class="btn" onclick="exportResults(\\'txt\\')">&#x2B07; TXT</button>' +
+    '<button class="btn" data-act="export-csv">&#x2B07; CSV</button>' +
+    '<button class="btn" data-act="export-txt">&#x2B07; TXT</button>' +
     '</div>';
   if (!rows.length){ document.getElementById('contentArea').innerHTML = h + '<div class="empty">Kh\\u00f4ng c\\u00f3 tr\\u1eadn n\\u00e0o kh\\u1edbp b\\u1ed9 l\\u1ecdc.</div>'; return; }
 
@@ -455,14 +771,14 @@ function renderResults(elapsedMs){
   ];
   h += '<table class="rtable" id="rtable"><thead><tr>' + headers.map(([f,l])=>{
     const cls = (advSortField===f) ? (' class="sort-'+advSortDir+'"') : '';
-    return '<th'+cls+' onclick="sortResults(\\''+f+'\\')">'+l+' <span class="sortar">\\u25BE</span></th>';
+    return '<th'+cls+' data-act="sort" data-field="'+f+'">'+l+' <span class="sortar">\\u25BE</span></th>';
   }).join('') + '</tr></thead><tbody>';
 
   for (const m of rows){
     const prio = priorityFor(m);
     const rowCls = (prio<=4 ? 'row-prio-'+prio+' ' : '') + 'row-clickable';
     const score = (m.home_score||0)+' - '+(m.away_score||0);
-    h += '<tr class="'+rowCls+'" onclick="toggleExpand(\\''+escHtml(m.id)+'\\', this)">' +
+      h += '<tr class="'+rowCls+'" data-act="expand" data-mid="'+escHtml(m.id)+'">' +
       '<td title="'+escHtml(m.competition||'')+'">'+escHtml((m.competition||'').substring(0,28))+'</td>' +
       '<td>'+escHtml(m.home)+'</td>' +
       '<td>'+escHtml(m.away)+'</td>' +
@@ -509,7 +825,7 @@ function exportResults(kind){
   } else {
     body = advLastResults.map(r => {
       const score = (r.home_score||0)+'-'+(r.away_score||0);
-      const goalsTxt = (r.goals||[]).map(g => '  #' + g.goal_number + ' (' + g.team + ', \\''+ (g.minute||'') +') HC ' + (g.hc_before||'?') + ' \\u2192 ' + (g.hc_after||'?') + ' \\u00b7 OU ' + (g.ou_before||'?') + ' \\u2192 ' + (g.ou_after||'?')).join('\\n');
+      const goalsTxt = (r.goals||[]).map(g => '  #' + g.goal_number + ' (' + g.team + ", '"+ (g.minute||'') +"') HC " + (g.hc_before||'?') + ' \\u2192 ' + (g.hc_after||'?') + ' \\u00b7 OU ' + (g.ou_before||'?') + ' \\u2192 ' + (g.ou_after||'?')).join('\\n');
       return [r.competition, r.home + ' ' + score + ' ' + r.away, r.status, r.start_time_utc, goalsTxt].join('\\n') + '\\n';
     }).join('\\n----\\n');
     mime = 'text/plain'; ext = 'txt';
@@ -526,12 +842,7 @@ function exportResults(kind){
   const data = await apiFetch('/api/data/matches?limit=200');
   if (data && data.length) {
     const sl = document.getElementById('slist');
-    sl.innerHTML = data.map(m => {
-      return '<div class="smatch" onclick="selectMatch(\\'' + escHtml(m.id) + '\\')" data-id="'+escHtml(m.id)+'">' +
-        '<div class="smatch-teams">'+escHtml(m.home)+' <span class="smatch-score">'+m.home_score+'-'+m.away_score+'</span> '+escHtml(m.away)+'</div>' +
-        '<div class="smatch-meta"><span>'+badge(m.status)+'</span><span>'+escHtml((m.competition||'').substring(0,25))+'</span><span>'+fmt(m.start_time_utc)+'</span></div>' +
-        '</div>';
-    }).join('');
+    sl.innerHTML = data.map(renderSidebarItem).join('');
     data.forEach(m => matches_cache[m.id] = m);
   }
 })();

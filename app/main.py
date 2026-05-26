@@ -520,6 +520,37 @@ async def api_data_csv(match_id: str, user: str = Depends(require_auth)):
     )
 
 
+@app.patch("/api/data/matches/{match_id:path}")
+async def api_data_match_update(
+    match_id: str,
+    payload: dict = Body(...),
+    user: str = Depends(require_auth),
+):
+    """Bulk-update a match's odds-history rows.
+
+    Body: `{"edits": [{"id": <row_id>, "<col>": <value>, ...}, ...]}`. Only
+    whitelisted columns are accepted (see _ODDS_HIST_WRITABLE).
+    """
+    from .database import update_odds_history_rows
+    if not get_match_by_id(match_id):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    edits = payload.get("edits") or []
+    if not isinstance(edits, list):
+        return JSONResponse({"error": "edits must be a list"}, status_code=400)
+    affected = update_odds_history_rows(match_id, edits)
+    return JSONResponse({"ok": True, "affected": affected})
+
+
+@app.delete("/api/data/matches/{match_id:path}")
+async def api_data_match_delete(match_id: str, user: str = Depends(require_auth)):
+    """Delete a match (cascades odds-history, events, goals, alerts)."""
+    from .database import delete_match
+    deleted = delete_match(match_id)
+    if not deleted:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({"ok": True, "id": match_id})
+
+
 @app.post("/api/data/import-csv")
 async def api_import_csv(
     files: list[UploadFile] = File(...),

@@ -247,7 +247,7 @@ function fmtTime(utcStr){if(!utcStr)return '—';return new Date(utcStr).toLocal
 function fmtInHalf(r){if(!r)return '—';const s=(r.status||'').toUpperCase(),m=r.minute;if(s==='FT')return 'FT';if(s==='HT')return 'HT';if(s==='INJURY_TIME_H1')return '1H:45+';if(s==='INJURY_TIME_H2')return '2H:90+';if(s==='H1')return '1H:'+(m!=null?m:'');if(s==='H2')return '2H:'+(m!=null?m:'');if(s==='LIVE'&&m!=null)return (m<=45?'1H:':'2H:')+m;if(s==='UPCOMING'||m==null)return '—';return s;}
 function badge(s){const live=['LIVE','H1','H2'];if(live.includes(s))return '<span class="badge b-live">'+s+'</span>';if(s==='HT')return '<span class="badge b-ht">HT</span>';if(s==='FT')return '<span class="badge b-ft">FT</span>';if(s==='UPCOMING')return '<span class="badge b-up">UP</span>';return '<span class="badge b-x">'+escHtml(s)+'</span>';}
 function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2800);}
-async function apiFetch(url){try{const r=await fetch(url);if(r.status===401){location.href='/login';return null;}return r.ok?r.json():null;}catch(e){showToast('L\\u1ed7i: '+e.message);return null;}}
+async function apiFetch(url){try{const r=await fetch(url);if(r.status===401){location.href='/login';return null;}return r.ok?r.json():null;}catch(e){showToast('Lỗi: '+e.message);return null;}}
 
 // Per-goal transition lines for the sidebar — Yêu cầu Data Browser:
 //   +Bàn k: HC <after> → <before> · OU <after> → <before>
@@ -256,15 +256,15 @@ async function apiFetch(url){try{const r=await fetch(url);if(r.status===401){loc
 function renderGoalTransitions(goals){
   if (!goals || !goals.length) return '';
   const cap = goals.slice(0, 3);
-  const dash = '\\u2014';
-  const arrow = ' \\u2192 ';
+  const dash = '—';
+  const arrow = ' → ';
   const lines = cap.map(g => {
     const hc = '<span style="color:var(--orange)">HC '+escHtml(g.hc_after||dash)+arrow+escHtml(g.hc_before||dash)+'</span>';
     const ou = '<span style="color:var(--purple)">OU '+escHtml(g.ou_after||dash)+arrow+escHtml(g.ou_before||dash)+'</span>';
-    return '<div class="smatch-goal">+B\\u00e0n'+g.goal_number+' '+hc+' \\u00b7 '+ou+'</div>';
+    return '<div class="smatch-goal">+Bàn'+g.goal_number+' '+hc+' · '+ou+'</div>';
   });
   if (goals.length > cap.length) {
-    lines.push('<div class="smatch-goal" style="color:var(--muted)">+'+(goals.length-cap.length)+' b\\u00e0n n\\u1eefa\\u2026</div>');
+    lines.push('<div class="smatch-goal" style="color:var(--muted)">+'+(goals.length-cap.length)+' bàn nữa…</div>');
   }
   return '<div class="smatch-goals">' + lines.join('') + '</div>';
 }
@@ -334,7 +334,7 @@ async function doSearch() {
   const data = await apiFetch('/api/data/matches?' + params.toString());
   const sl = document.getElementById('slist');
   if (!data || !data.length) {
-    sl.innerHTML = '<div class="smatch-empty">Kh\\u00f4ng t\\u00ecm th\\u1ea5y tr\\u1eadn n\\u00e0o</div>'; return;
+    sl.innerHTML = '<div class="smatch-empty">Không tìm thấy trận nào</div>'; return;
   }
   sl.innerHTML = data.map(renderSidebarItem).join('');
   data.forEach(m => matches_cache[m.id] = m);
@@ -418,7 +418,7 @@ async function maybeFlushEdits(reason){
     _editMode = null; _editBuffer = {}; _editRowsById = {};
     return true;
   }
-  const ans = window.confirm('B\\u1ea1n c\\u00f3 thay \\u0111\\u1ed5i ch\\u01b0a l\\u01b0u. L\\u01b0u tr\\u01b0\\u1edbc khi chuy\\u1ec3n?');
+  const ans = window.confirm('Bạn có thay đổi chưa lưu. Lưu trước khi chuyển?');
   if (ans) {
     const ok = await saveEdits();
     if (!ok) { return false; }
@@ -442,13 +442,13 @@ async function renderDetail(id, which) {
     '<b style="font-size:14px;font-weight:700">'+escHtml(m.home)+' vs '+escHtml(m.away)+'</b>' +
     badge(m.status) +
     '<span style="color:var(--muted);font-size:12px">'+escHtml(m.competition||'')+'</span>' +
-    '<a href="'+analyzeHref+'" class="btn btn-green" target="_blank">&#x1F50D; Ph\\u00e2n t\\u00edch</a>' +
+    '<a href="'+analyzeHref+'" class="btn btn-green" target="_blank">&#x1F50D; Phân tích</a>' +
     '<a href="'+csvHref+'" class="btn" download>&#x2B07; CSV</a>' +
-    (selectedB && which==='A' ? '' : '<button class="btn" onclick="selectCompare()">&#x2696; So s\\u00e1nh</button>') +
+    (selectedB && which==='A' ? '' : '<button class="btn" onclick="selectCompare()">&#x2696; So sánh</button>') +
     '<span style="flex:1"></span>' +
-    '<button class="btn btn-orange'+(isEditing?' is-active':'')+'" onclick="toggleEdit()">'+(isEditing?'\\u2716 H\\u1ee7y':'\\u270f S\\u1eeda')+'</button>' +
-    (isEditing ? '<button class="btn btn-green" onclick="saveEdits()">\\u2705 L\\u01b0u</button>' : '') +
-    '<button class="btn btn-red" data-act="del-current">&#x1F5D1; X\\u00f3a</button>' +
+    '<button class="btn btn-orange'+(isEditing?' is-active':'')+'" onclick="toggleEdit()">'+(isEditing?'✖ Hủy':'✏ Sửa')+'</button>' +
+    (isEditing ? '<button class="btn btn-green" onclick="saveEdits()">✅ Lưu</button>' : '') +
+    '<button class="btn btn-red" data-act="del-current">&#x1F5D1; Xóa</button>' +
     '</div>';
   html += renderOddsTable(oddsData||[], m.home, m.away, isEditing);
   document.getElementById('contentArea').innerHTML = html;
@@ -456,7 +456,7 @@ async function renderDetail(id, which) {
 
 window.selectCompare = async function() {
   if (!selectedA) return;
-  document.getElementById('contentArea').innerHTML = '<div class="empty">&larr; Click tr\\u1eadn th\\u1ee9 hai trong danh s\\u00e1ch \\u0111\\u1ec3 so s\\u00e1nh</div>';
+  document.getElementById('contentArea').innerHTML = '<div class="empty">&larr; Click trận thứ hai trong danh sách để so sánh</div>';
   document.querySelectorAll('.smatch').forEach(el => {
     if (!selectedA || el.dataset.id !== selectedA.id) {
       el.onclick = function(){ setCompare(el.dataset.id); };
@@ -472,11 +472,11 @@ async function renderSplit() {
   // Yêu cầu #10 — scroll-sync toggle. Default = independent. Persist in session.
   const syncMode = sessionStorage.getItem('layer3_scroll') === 'sync';
   const toggleHtml =
-    '<div class="scroll-toggle '+(syncMode?'on':'')+'" id="scrollToggle" onclick="toggleScrollSync()" title="Chuy\\u1ec3n c\\u01b0u\\u1ed9n">' +
-      '<span>'+(syncMode?'\\u21F5 Cu\\u1ed9n chung':'\\u21F4 Cu\\u1ed9n ri\\u00eang')+'</span><span class="dot"></span>' +
+    '<div class="scroll-toggle '+(syncMode?'on':'')+'" id="scrollToggle" onclick="toggleScrollSync()" title="Chuyển cưuộn">' +
+      '<span>'+(syncMode?'⇵ Cuộn chung':'⇴ Cuộn riêng')+'</span><span class="dot"></span>' +
     '</div>';
   const html = '<div class="actions-bar">' + toggleHtml +
-    '<button class="btn" onclick="clearCompare()" style="margin-left:auto">&#x2715; B\\u1ecf so s\\u00e1nh</button></div>' +
+    '<button class="btn" onclick="clearCompare()" style="margin-left:auto">&#x2715; Bỏ so sánh</button></div>' +
     '<div class="split">' +
     '<div class="split-pane" id="paneA">' +
       '<div class="actions-bar"><b>'+escHtml(selectedA.home)+' vs '+escHtml(selectedA.away)+'</b>'+badge(selectedA.status)+'<a href="/api/data/matches/'+encodeURIComponent(selectedA.id)+'/csv" class="btn" download>&#x2B07; CSV</a></div>' +
@@ -523,7 +523,7 @@ window.clearCompare = async function() {
   selectedB=null; updateSidebarSel(); if(selectedA) renderDetail(selectedA.id,'A');
 };
 
-function fmtCell(v){return v==null?'\\u2014':v;}
+function fmtCell(v){return v==null?'—':v;}
 function diffCls(curr,prev,f){if(curr==null||prev==null)return '';const c=parseFloat(curr),p=parseFloat(prev[f]);if(isNaN(c)||isNaN(p)||c===p)return '';return c>p?' diff-up':' diff-down';}
 
 // Editable cell helper. Renders an <input> bound to _editBuffer when in edit
@@ -550,9 +550,9 @@ window.onCellEdit = function(inp){
 };
 
 function renderOddsTable(rows, home, away, editable) {
-  if (!rows.length) return '<div class="panel"><div class="panel-h">&#x1F4CA; Bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o</div><div style="color:var(--muted);text-align:center;padding:24px;font-size:12px">Ch\\u01b0a c\\u00f3 d\\u1eef li\\u1ec7u</div></div>';
-  let h = '<div class="panel"><div class="panel-h">&#x1F4CA; Bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o <span style="font-size:11px;color:var(--muted);font-weight:400">('+rows.length+' snapshots'+(editable?' \\u00b7 \\u270f ch\\u1ebf \\u0111\\u1ed9 ch\\u1ec9nh s\\u1eeda':'')+')</span></div><div class="panel-b"><table class="ot"><thead><tr>' +
-    '<th>Hi\\u1ec7p</th><th>Score</th><th>Ph\\u00fat</th>' +
+  if (!rows.length) return '<div class="panel"><div class="panel-h">&#x1F4CA; Biến động kèo</div><div style="color:var(--muted);text-align:center;padding:24px;font-size:12px">Chưa có dữ liệu</div></div>';
+  let h = '<div class="panel"><div class="panel-h">&#x1F4CA; Biến động kèo <span style="font-size:11px;color:var(--muted);font-weight:400">('+rows.length+' snapshots'+(editable?' · ✏ chế độ chỉnh sửa':'')+')</span></div><div class="panel-b"><table class="ot"><thead><tr>' +
+    '<th>Hiệp</th><th>Score</th><th>Phút</th>' +
     '<th>HC '+escHtml((home||'').split(' ')[0])+'</th><th>@</th>' +
     '<th>HC '+escHtml((away||'').split(' ')[0])+'</th><th>@</th>' +
     '<th>OU</th><th>Over</th><th>Under</th>' +
@@ -565,7 +565,7 @@ function renderOddsTable(rows, home, away, editable) {
     h+='<tr>'+
       '<td style="color:var(--muted)">'+fmtInHalf(r)+'</td>'+
       '<td style="font-weight:700;color:var(--red)">'+score+'</td>'+
-      '<td style="color:var(--orange)">'+(r.minute?r.minute+"'":'\\u2014')+'</td>'+
+      '<td style="color:var(--orange)">'+(r.minute?r.minute+"'":'—')+'</td>'+
       '<td class="'+ec+'">'+editCell(r.id,'home_handicap',r.home_handicap,editable)+'</td>'+
       '<td class="'+(p?diffCls(r.home_handicap_odds,p,'home_handicap_odds'):'').trim()+ec+'">'+editCellNum(r.id,'home_handicap_odds',r.home_handicap_odds,editable)+'</td>'+
       '<td class="'+ec+'">'+editCell(r.id,'away_handicap',r.away_handicap,editable)+'</td>'+
@@ -615,7 +615,7 @@ window.toggleEdit = async function(){
   if (_editMode === 'A') {
     // Cancel — if there are pending edits, ask. Mockup: "tắt thì sẽ hỏi muốn lưu không"
     if (hasPendingEdits()) {
-      const ans = window.confirm('C\\u00f3 thay \\u0111\\u1ed5i ch\\u01b0a l\\u01b0u. L\\u01b0u kh\\u00f4ng?');
+      const ans = window.confirm('Có thay đổi chưa lưu. Lưu không?');
       if (ans) {
         const ok = await saveEdits();
         if (!ok) return;
@@ -623,7 +623,7 @@ window.toggleEdit = async function(){
     }
     _editMode = null; _editBuffer = {};
   } else {
-    if (selectedB) { showToast('B\\u1ecf so s\\u00e1nh tr\\u01b0\\u1edbc khi s\\u1eeda'); return; }
+    if (selectedB) { showToast('Bỏ so sánh trước khi sửa'); return; }
     _editMode = 'A'; _editBuffer = {};
   }
   await renderDetail(selectedA.id, 'A');
@@ -639,7 +639,7 @@ window.saveEdits = async function(){
     edits.push(Object.assign({id: Number(rowId)}, fields));
   }
   if (!edits.length) {
-    showToast('Kh\\u00f4ng c\\u00f3 thay \\u0111\\u1ed5i n\\u00e0o');
+    showToast('Không có thay đổi nào');
     return true;
   }
   try {
@@ -651,17 +651,17 @@ window.saveEdits = async function(){
     if (r.status === 401) { location.href='/login'; return false; }
     if (!r.ok) {
       const txt = await r.text();
-      showToast('L\\u01b0u th\\u1ea5t b\\u1ea1i: '+txt.slice(0,120));
+      showToast('Lưu thất bại: '+txt.slice(0,120));
       return false;
     }
     const j = await r.json();
-    showToast('\\u0110\\u00e3 l\\u01b0u '+j.affected+' d\\u00f2ng');
+    showToast('Đã lưu '+j.affected+' dòng');
     _editBuffer = {};
     _editMode = null;
     await renderDetail(selectedA.id, 'A');
     return true;
   } catch (e) {
-    showToast('L\\u1ed7i m\\u1ea1ng: '+e.message);
+    showToast('Lỗi mạng: '+e.message);
     return false;
   }
 };
@@ -672,8 +672,8 @@ window.confirmDelete = function(id){
   if (!m) return;
   const txt = m.home + ' vs ' + m.away;
   document.getElementById('delConfirmText').innerHTML =
-    'B\\u1ea1n c\\u00f3 ch\\u1eafc mu\\u1ed1n x\\u00f3a tr\\u1eadn <b>' + escHtml(txt) + '</b> kh\\u00f4ng? <br>' +
-    '<span style="color:var(--muted)">Thao t\\u00e1c n\\u00e0y x\\u00f3a c\\u1ea3 l\\u1ecbch s\\u1eed bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o, events, goals — kh\\u00f4ng th\\u1ec3 ho\\u00e0n t\\u00e1c.</span>';
+    'Bạn có chắc muốn xóa trận <b>' + escHtml(txt) + '</b> không? <br>' +
+    '<span style="color:var(--muted)">Thao tác này xóa cả lịch sử biến động kèo, events, goals — không thể hoàn tác.</span>';
   document.getElementById('delConfirmBg').classList.add('show');
   document.getElementById('delConfirmBg').dataset.id = id;
 };
@@ -687,20 +687,20 @@ window.doDelete = async function(){
     if (r.status === 401) { location.href='/login'; return; }
     if (!r.ok) {
       const t = await r.text();
-      showToast('X\\u00f3a th\\u1ea5t b\\u1ea1i: '+t.slice(0,120));
+      showToast('Xóa thất bại: '+t.slice(0,120));
       return;
     }
-    showToast('\\u0110\\u00e3 x\\u00f3a tr\\u1eadn');
+    showToast('Đã xóa trận');
     closeDeleteConfirm();
     // Clear local state & refresh sidebar.
     if (selectedA && selectedA.id === id) selectedA = null;
     if (selectedB && selectedB.id === id) selectedB = null;
     delete matches_cache[id];
     _editMode = null; _editBuffer = {};
-    document.getElementById('contentArea').innerHTML = '<div class="empty">&larr; Ch\\u1ecdn m\\u1ed9t tr\\u1eadn \\u0111\\u1ec3 xem chi ti\\u1ebft</div>';
+    document.getElementById('contentArea').innerHTML = '<div class="empty">&larr; Chọn một trận để xem chi tiết</div>';
     await doSearch();
   } catch (e) {
-    showToast('L\\u1ed7i m\\u1ea1ng: '+e.message);
+    showToast('Lỗi mạng: '+e.message);
   }
 };
 
@@ -758,27 +758,27 @@ function renderResults(elapsedMs){
   });
 
   let h = '<div class="results-bar">' +
-    '<span><b>'+rows.length+'</b> k\\u1ebft qu\\u1ea3</span>' +
+    '<span><b>'+rows.length+'</b> kết quả</span>' +
     (elapsedMs!=null?'<span>· '+elapsedMs+' ms</span>':'') +
     '<span class="spacer"></span>' +
     '<button class="btn" data-act="export-csv">&#x2B07; CSV</button>' +
     '<button class="btn" data-act="export-txt">&#x2B07; TXT</button>' +
     '</div>';
-  if (!rows.length){ document.getElementById('contentArea').innerHTML = h + '<div class="empty">Kh\\u00f4ng c\\u00f3 tr\\u1eadn n\\u00e0o kh\\u1edbp b\\u1ed9 l\\u1ecdc.</div>'; return; }
+  if (!rows.length){ document.getElementById('contentArea').innerHTML = h + '<div class="empty">Không có trận nào khớp bộ lọc.</div>'; return; }
 
   const headers = [
-    ['competition','Gi\\u1ea3i'],
-    ['home','Nh\\u00e0'],
-    ['away','Kh\\u00e1ch'],
-    ['_score','T\\u1ef7 s\\u1ed1'],
-    ['status','Tr\\u1ea1ng'],
+    ['competition','Giải'],
+    ['home','Nhà'],
+    ['away','Khách'],
+    ['_score','Tỷ số'],
+    ['status','Trạng'],
     ['open_hc','HC open'],
     ['open_ou','OU open'],
-    ['start_time_utc','Th\\u1eddi gian'],
+    ['start_time_utc','Thời gian'],
   ];
   h += '<table class="rtable" id="rtable"><thead><tr>' + headers.map(([f,l])=>{
     const cls = (advSortField===f) ? (' class="sort-'+advSortDir+'"') : '';
-    return '<th'+cls+' data-act="sort" data-field="'+f+'">'+l+' <span class="sortar">\\u25BE</span></th>';
+    return '<th'+cls+' data-act="sort" data-field="'+f+'">'+l+' <span class="sortar">▾</span></th>';
   }).join('') + '</tr></thead><tbody>';
 
   for (const m of rows){
@@ -791,8 +791,8 @@ function renderResults(elapsedMs){
       '<td>'+escHtml(m.away)+'</td>' +
       '<td style="text-align:center;font-weight:700">'+score+'</td>' +
       '<td>'+badge(m.status)+'</td>' +
-      '<td>'+escHtml(m.open_hc||'\\u2014')+'</td>' +
-      '<td>'+escHtml(m.open_ou||'\\u2014')+'</td>' +
+      '<td>'+escHtml(m.open_hc||'—')+'</td>' +
+      '<td>'+escHtml(m.open_ou||'—')+'</td>' +
       '<td style="color:var(--muted)">'+fmt(m.start_time_utc)+'</td>' +
       '</tr>';
     // Hidden expansion row (filled on first click)
@@ -815,14 +815,14 @@ async function toggleExpand(matchId, tr){
   exp.style.display = '';
   tr.classList.add('expanded');
   const cell = exp.querySelector('td');
-  cell.innerHTML = '<div style="color:var(--muted);font-size:11px">\\u0110ang t\\u1ea3i b\\u1ea3ng bi\\u1ebfn \\u0111\\u1ed9ng k\\u00e8o...</div>';
+  cell.innerHTML = '<div style="color:var(--muted);font-size:11px">Đang tải bảng biến động kèo...</div>';
   const odds = await apiFetch('/api/matches/'+encodeURIComponent(matchId)+'/odds-history');
   const m = advLastResults.find(r => r.id === matchId) || {};
   cell.innerHTML = renderOddsTable(odds||[], m.home, m.away);
 }
 
 function exportResults(kind){
-  if (!advLastResults.length){ showToast('Kh\\u00f4ng c\\u00f3 d\\u1eef li\\u1ec7u \\u0111\\u1ec3 export'); return; }
+  if (!advLastResults.length){ showToast('Không có dữ liệu để export'); return; }
   let body, mime, ext;
   if (kind === 'csv') {
     const headers = ['id','competition','home','away','home_score','away_score','status','open_hc','open_ou','start_time_utc'];
@@ -832,7 +832,7 @@ function exportResults(kind){
   } else {
     body = advLastResults.map(r => {
       const score = (r.home_score||0)+'-'+(r.away_score||0);
-      const goalsTxt = (r.goals||[]).map(g => '  #' + g.goal_number + ' (' + g.team + ", '"+ (g.minute||'') +"') HC " + (g.hc_before||'?') + ' \\u2192 ' + (g.hc_after||'?') + ' \\u00b7 OU ' + (g.ou_before||'?') + ' \\u2192 ' + (g.ou_after||'?')).join('\\n');
+      const goalsTxt = (r.goals||[]).map(g => '  #' + g.goal_number + ' (' + g.team + ", '"+ (g.minute||'') +"') HC " + (g.hc_before||'?') + ' → ' + (g.hc_after||'?') + ' · OU ' + (g.ou_before||'?') + ' → ' + (g.ou_after||'?')).join('\\n');
       return [r.competition, r.home + ' ' + score + ' ' + r.away, r.status, r.start_time_utc, goalsTxt].join('\\n') + '\\n';
     }).join('\\n----\\n');
     mime = 'text/plain'; ext = 'txt';

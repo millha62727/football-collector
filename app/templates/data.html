@@ -286,38 +286,45 @@ function renderSidebarItem(m){
   const sl = document.getElementById('slist');
   if (!sl || sl._delegationAttached) return;
   sl._delegationAttached = true;
+  let clickTimer = null;
   sl.addEventListener('click', ev => {
     const card = ev.target.closest('.smatch'); if (!card) return;
     const id = card.dataset.id; if (!id) return;
-    selectMatch(id);
+    // Browsers fire click before dblclick — debounce so dblclick can win.
+    if (ev.detail >= 2) return;
+    if (clickTimer) clearTimeout(clickTimer);
+    clickTimer = setTimeout(() => { clickTimer = null; selectMatch(id); }, 220);
   });
   sl.addEventListener('dblclick', ev => {
     const card = ev.target.closest('.smatch'); if (!card) return;
     const id = card.dataset.id; if (!id) return;
+    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
     handleSidebarDblClick(id);
   });
   sl.addEventListener('contextmenu', ev => {
     const card = ev.target.closest('.smatch'); if (!card) return;
     ev.preventDefault();
     const id = card.dataset.id; if (!id) return;
+    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
     handleSidebarDblClick(id);
   });
 })();
 
 async function handleSidebarDblClick(id){
   const m = matches_cache[id]; if (!m) return;
-  if (selectedA && selectedA.id === id) return;
   if (selectedB && selectedB.id === id) {
     selectedB = null; updateSidebarSel();
     if (selectedA) await renderDetail(selectedA.id, 'A');
     return;
   }
-  if (!selectedA) { selectMatch(id); return; }
+  if (!selectedA || selectedA.id === id) {
+    // No A yet, or dblclick on the already-selected A — promote/select as A.
+    selectMatch(id); return;
+  }
   if (!(await maybeFlushEdits('switch'))) return;
   selectedB = m; updateSidebarSel();
   await renderSplit();
 }
-
 async function doSearch() {
   const q = document.getElementById('sqText').value;
   const from_ = document.getElementById('sqFrom').value;

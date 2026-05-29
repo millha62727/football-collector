@@ -125,6 +125,13 @@ def is_prestigious(name: Optional[str]) -> bool:
     lower = name.lower()
     return any(p.lower() in lower for p in PRESTIGIOUS_COMPETITIONS)
 
+
+# Pre-built ILIKE patterns so the prestige filter can run IN SQL (before LIMIT),
+# mirroring is_prestigious()'s case-insensitive substring semantics. Needed
+# because filtering in Python after a SQL LIMIT silently drops everything when
+# the first N rows happen to be non-prestigious.
+_PRESTIGIOUS_ILIKE_PATTERNS: list[str] = [f"%{p}%" for p in PRESTIGIOUS_COMPETITIONS]
+
 # --- Connection pool -------------------------------------------------------
 
 _pool: Optional[ThreadedConnectionPool] = None
@@ -1794,6 +1801,14 @@ def get_unprocessed_ft_matches(
     """
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        prestige_clause = ""
+        prestige_params: list = []
+        if prestigious_only:
+            # Filter prestige IN SQL (before LIMIT). Doing it in Python after the
+            # LIMIT silently returns 0 when the oldest N unprocessed matches are
+            # all non-prestigious. ILIKE ANY mirrors is_prestigious() semantics.
+            prestige_clause = "AND m.competition ILIKE ANY(%s)"
+            prestige_params = [_PRESTIGIOUS_ILIKE_PATTERNS]
         cur.execute(
             f"""
             SELECT m.id, m.competition, m.home, m.away,
@@ -1808,6 +1823,7 @@ def get_unprocessed_ft_matches(
                AND m.home_score IS NOT NULL AND m.away_score IS NOT NULL
                AND o.snaps >= %s
                AND {_EXCLUDE_COMP_SQL}
+               {prestige_clause}
                AND NOT EXISTS (
                    SELECT 1 FROM match_patterns p
                     WHERE p.match_id = m.id AND p.model = %s
@@ -1815,37 +1831,47 @@ def get_unprocessed_ft_matches(
              ORDER BY m.start_time_utc ASC
              LIMIT %s
             """,
-            [min_odds_snapshots] + _EXCLUDE_COMP_PATTERNS + [model, limit],
+            [min_odds_snapshots] + _EXCLUDE_COMP_PATTERNS + prestige_params + [model, limit],
         )
         rows = [dict(r) for r in cur.fetchall()]
-
-    if prestigious_only:
-        rows = [r for r in rows if is_prestigious(r.get("competition"))]
     return rows
 
 
 def count_pattern_progress(model: str, prestigious_only: bool = True) -> dict[str, Any]:
-    """How many eligible FT matches are processed vs pending for `model`."""
+    """How many eligible FT matches are processed vs pending for `model`.
+
+    Counts entirely in SQL (no full-table fetch into Python) so it stays cheap
+    on the 1.9 GB VPS. Prestige filter uses the same ILIKE ANY semantics as the
+    sweep's match selection.
+    """
+    prestige_clause = ""
+    prestige_params: list = []
+    if prestigious_only:
+        prestige_clause = "AND m.competition ILIKE ANY(%s)"
+        prestige_params = [_PRESTIGIOUS_ILIKE_PATTERNS]
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
             f"""
-            SELECT m.id, m.competition,
-                   EXISTS (SELECT 1 FROM match_patterns p
-                            WHERE p.match_id = m.id AND p.model = %s) AS done
+            SELECT
+                count(*) AS eligible,
+                count(*) FILTER (
+                    WHERE EXISTS (SELECT 1 FROM match_patterns p
+                                   WHERE p.match_id = m.id AND p.model = %s)
+                ) AS processed
               FROM matches m
              WHERE m.status = 'FT'
                AND m.home_score IS NOT NULL AND m.away_score IS NOT NULL
                AND {_EXCLUDE_COMP_SQL}
+               {prestige_clause}
             """,
-            [model] + _EXCLUDE_COMP_PATTERNS,
+            [model] + _EXCLUDE_COMP_PATTERNS + prestige_params,
         )
-        rows = cur.fetchall()
-    if prestigious_only:
-        rows = [r for r in rows if is_prestigious(r["competition"])]
-    done = sum(1 for r in rows if r["done"])
-    return {"model": model, "eligible": len(rows), "processed": done,
-            "pending": len(rows) - done, "prestigious_only": prestigious_only}
+        row = cur.fetchone() or {}
+    eligible = int(row.get("eligible") or 0)
+    processed = int(row.get("processed") or 0)
+    return {"model": model, "eligible": eligible, "processed": processed,
+            "pending": eligible - processed, "prestigious_only": prestigious_only}
 
 
 def upsert_match_pattern(

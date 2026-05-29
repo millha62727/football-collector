@@ -269,6 +269,7 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
       <button class="btn" id="btn-edit" onclick="toggleEdit()">✏ Sửa</button>
       <button class="btn run" onclick="runCompute()">▶ Run</button>
       <button class="btn ai" id="btn-ai-predict" onclick="aiPredict()" disabled title="Cần cấu hình AI">🤖 AI dự đoán</button>
+      <button class="btn" id="btn-view-pattern" onclick="viewStoredPattern()" style="display:none" title="Xem pattern AI đã lưu cho trận này">📋 Pattern đã lưu</button>
       <button class="btn save" onclick="saveSession()">💾 Save</button>
       <button class="btn open" onclick="openModal()">📂 Open</button>
       <button class="btn" onclick="exportJSON()">⬇ Export JSON</button>
@@ -571,6 +572,50 @@ async def api_ai_predict(
     except Exception as e:  # upstream/LLM/parse failure — never 500
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
     return JSONResponse({"ok": True, **out})
+
+
+@router.get("/api/analyzer/patterns/{match_id:path}")
+async def api_get_pattern(match_id: str, user: str = Depends(require_auth)):
+    """Most recent stored AI pattern for a match (None if not yet processed)."""
+    from ..database import get_match_pattern
+    p = get_match_pattern(match_id)
+    return JSONResponse({"pattern": p})
+
+
+@router.post("/api/analyzer/save-pattern")
+async def api_save_pattern(
+    payload: dict[str, Any] = Body(...),
+    user: str = Depends(require_auth),
+):
+    """On-demand: run grounded analysis for a DB match and persist it.
+
+    Mirrors what the cron sweep does, but for a single match the user is
+    looking at. Returns the compact status dict from analyze_and_store.
+    """
+    if not AI.is_configured():
+        raise HTTPException(400, "AI chưa được cấu hình")
+    match_id = (payload.get("match_id") or "").strip()
+    if not match_id:
+        raise HTTPException(400, "match_id required")
+    prestigious_only = bool(payload.get("prestigious_only", False))
+    try:
+        out = await AIP.analyze_and_store(match_id, prestigious_only=prestigious_only)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
+    return JSONResponse({"ok": True, **out})
+
+
+@router.get("/api/analyzer/patterns-aggregate")
+async def api_patterns_aggregate(
+    prestigious_only: bool = True,
+    user: str = Depends(require_auth),
+):
+    """Tag/signal frequency roll-up across stored patterns — the raw material
+    for distilling 'công thức'."""
+    from ..database import aggregate_patterns, count_pattern_progress
+    agg = aggregate_patterns(prestigious_only=prestigious_only)
+    progress = count_pattern_progress(AI._model(), prestigious_only=prestigious_only) if AI.is_configured() else {}
+    return JSONResponse({"aggregate": agg, "progress": progress})
 
 
 # ---------------------------------------------------------------------------

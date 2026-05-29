@@ -678,6 +678,11 @@ function _renderAIResult(d) {
       html += '<div class="ai-card"><h4>Tín hiệu</h4><ul class="ai-list">' +
               p.signals.map(s => '<li>' + escapeHtml(String(s)) + '</li>').join('') + '</ul></div>';
     }
+    if (Array.isArray(p.tags) && p.tags.length) {
+      html += '<div class="ai-card"><h4>Tags (công thức)</h4><div class="ai-pred-grid">' +
+              p.tags.map(t => '<span class="ai-pill">' + escapeHtml(String(t)) + '</span>').join('') +
+              '</div></div>';
+    }
     if (Array.isArray(p.caveats) && p.caveats.length) {
       html += '<div class="ai-card"><h4>Lưu ý</h4><ul class="ai-list">' +
               p.caveats.map(s => '<li>' + escapeHtml(String(s)) + '</li>').join('') + '</ul></div>';
@@ -766,6 +771,7 @@ async function loadFromMatch(matchId) {
   }
   const data = await r.json();
   S.filename     = data.filename;
+  S.match_id     = matchId;
   S.meta         = data.meta;
   S.csv_blob     = data.csv_blob;
   S.rows_filtered = data.rows_filtered;
@@ -801,6 +807,46 @@ async function loadFromMatch(matchId) {
   } else {
     toast('Đã nạp ' + data.row_count + ' rows (' + (isLive ? 'đang live' : data.match_status) + ')', 'ok');
   }
+
+  // Reveal "Pattern đã lưu" only if this match already has a stored AI pattern.
+  refreshStoredPatternButton();
+}
+
+async function refreshStoredPatternButton() {
+  const btn = $('btn-view-pattern');
+  if (!btn) return;
+  btn.style.display = 'none';
+  if (!S.match_id) return;
+  try {
+    const r = await fetch('/api/analyzer/patterns/' + encodeURIComponent(S.match_id));
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.pattern) {
+      S._stored_pattern = d.pattern;
+      btn.style.display = '';
+    }
+  } catch (e) { /* silent — button just stays hidden */ }
+}
+
+function viewStoredPattern() {
+  const p = S._stored_pattern;
+  if (!p) { toast('Chưa có pattern lưu cho trận này', 'warn'); return; }
+  // Adapt the stored row to the shape _renderAIResult expects.
+  _renderAIResult({
+    parsed: {
+      summary: p.summary,
+      signals: p.signals || [],
+      prediction: p.prediction || {},
+      confidence: p.confidence,
+      caveats: p.caveats || [],
+      tags: p.tags || [],
+    },
+    stats: { filters: { open_hc: p.open_hc, open_ou: p.open_ou }, ...(p.base_rate || {}) },
+    model: p.model,
+    content: p.raw_content || '',
+    usage: {},
+  });
+  openAIModal();
 }
 
 document.addEventListener('DOMContentLoaded', () => {

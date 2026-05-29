@@ -130,6 +130,9 @@ NHIỆM VỤ:
 - Tóm tắt pattern của trận theo dữ liệu milestone.
 - Đưa nhận định có điều kiện về: kèo chấp favorite-cover, tài/xỉu, và tỉ số hợp lý.
 - Luôn nhắc sample size. Nếu sample nhỏ (<30) phải hạ confidence rõ ràng.
+- Gắn "tags" là các nhãn pattern NGẮN, viết-thường, dùng gạch dưới, để sau gom thành công thức.
+  Ví dụ tag hợp lệ: fav_cover, fav_no_cover, over_hit, under_hit, btts, clean_sheet_fav,
+  comeback, line_drifted_up, line_drifted_down, low_scoring, high_scoring, draw, small_sample.
 - Không đưa lời khuyên cá cược chắc thắng. Viết ngắn, thực dụng, tiếng Việt.
 - CHỈ trả JSON, không kèm giải thích ngoài JSON.
 
@@ -140,6 +143,7 @@ Trả về JSON đúng schema:
 {{
   "summary": "1-2 câu",
   "signals": ["..."],
+  "tags": ["fav_cover", "over_hit", "..."],
   "prediction": {{"score": "x-y", "handicap_lean": "favorite|underdog|no_edge", "ou_lean": "over|under|no_edge"}},
   "confidence": 0.0,
   "caveats": ["..."]
@@ -200,3 +204,95 @@ def _parse_json_loose(text: str) -> Optional[dict[str, Any]]:
         except json.JSONDecodeError:
             return None
     return None
+
+
+def _norm_tags(parsed: Optional[dict[str, Any]]) -> list[str]:
+    """Sanitize model-supplied tags into stable snake_case slugs (max 12)."""
+    if not parsed:
+        return []
+    raw = parsed.get("tags") or []
+    out: list[str] = []
+    seen = set()
+    for t in raw:
+        if not isinstance(t, str):
+            continue
+        slug = re.sub(r"[^a-z0-9]+", "_", t.strip().lower()).strip("_")[:40]
+        if slug and slug not in seen:
+            seen.add(slug)
+            out.append(slug)
+        if len(out) >= 12:
+            break
+    return out
+
+
+async def analyze_and_store(
+    match_id: str,
+    *,
+    prestigious_only: bool = False,
+) -> dict[str, Any]:
+    """Reconstruct a finished match from the DB, run grounded analysis, and
+    persist the structured result to match_patterns. Used by the sweep and the
+    on-demand "save pattern" endpoint.
+
+    Returns a compact status dict (no full content) suitable for batch logging.
+    """
+    # Lazy imports to avoid a circular dependency: views imports this module,
+    # and database is heavy. Import at call time, not module load.
+    from ..database import (
+        get_match_by_id,
+        get_odds_history_for_analyzer,
+        upsert_match_pattern,
+    )
+    from .views import _db_rows_to_csv_rows
+
+    match = get_match_by_id(match_id)
+    if not match:
+        raise RuntimeError(f"match không tồn tại: {match_id}")
+
+    db_rows = get_odds_history_for_analyzer(match_id)
+    if not db_rows:
+        raise RuntimeError(f"không có odds history cho match {match_id}")
+
+    rows = _db_rows_to_csv_rows(db_rows)
+    meta = {
+        "league": match.get("competition"),
+        "home": match.get("home"),
+        "away": match.get("away"),
+    }
+    result = await analyze_match(rows, meta=meta, prestigious_only=prestigious_only)
+
+    parsed = result.get("parsed") or {}
+    pred = parsed.get("prediction") if isinstance(parsed.get("prediction"), dict) else {}
+    conf = parsed.get("confidence")
+    try:
+        conf = float(conf) if conf is not None else None
+    except (TypeError, ValueError):
+        conf = None
+
+    row_id = upsert_match_pattern(
+        match_id,
+        result.get("model") or "",
+        summary=(parsed.get("summary") or "")[:2000],
+        signals=parsed.get("signals") if isinstance(parsed.get("signals"), list) else [],
+        tags=_norm_tags(parsed),
+        prediction=pred or {},
+        confidence=conf,
+        caveats=parsed.get("caveats") if isinstance(parsed.get("caveats"), list) else [],
+        open_hc=str(result["features"].get("opening_hc")) if result["features"].get("opening_hc") is not None else None,
+        open_ou=str(result["features"].get("opening_ou")) if result["features"].get("opening_ou") is not None else None,
+        base_rate=_trim_stats_for_prompt(result.get("stats") or {}),
+        raw_features=result.get("features") or {},
+        raw_content=(result.get("content") or "")[:8000],
+        finish_reason=result.get("finish_reason"),
+        parse_ok=bool(result.get("parsed")),
+    )
+    return {
+        "match_id": match_id,
+        "row_id": row_id,
+        "model": result.get("model"),
+        "parse_ok": bool(result.get("parsed")),
+        "finish_reason": result.get("finish_reason"),
+        "tags": _norm_tags(parsed),
+        "confidence": conf,
+        "content_len": len(result.get("content") or ""),
+    }

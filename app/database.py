@@ -87,6 +87,34 @@ PRESTIGIOUS_COMPETITIONS: tuple[str, ...] = (
     "Primeira Liga", "Giải VĐQG Nữ Nga",
     "Cúp U23 châu Á", "Cúp Quốc gia Pháp",
     "Giải hạng Nhất Đan Mạch", "Giải VĐQG Đan Mạch",
+    # --- Tier-1 top flights the old English/abbreviated fragments missed. ---
+    # The upstream API emits full Vietnamese names: EPL is
+    # "Giải bóng đá Ngoại hạng Anh" (not "Premier League"), and national top
+    # flights use "Vô địch Quốc gia X" — which the old "VĐQG X" abbreviation
+    # never matched. Exact full strings = no women's/youth false positives.
+    "Giải bóng đá Ngoại hạng Anh",                 # EPL
+    "Giải bóng đá nhà nghề Mỹ",                    # MLS (top flight)
+    "Giải Vô địch Quốc gia Bồ Đào Nha",            # Primeira Liga
+    "Giải Vô địch Quốc gia Đức",                   # Bundesliga
+    "Giải Vô địch Quốc gia Ý Serie A", "Giải Vô địch Quốc gia Ý (Serie A)",
+    "Giải Vô địch Quốc gia Pháp",                  # Ligue 1
+    "Giải Vô địch Quốc gia Hà Lan",                # Eredivisie
+    "Giải Vô địch Quốc gia Argentina",
+    "Giải Vô địch Quốc gia Trung Quốc",            # CSL
+    "Giải Vô địch Quốc gia Mexico Liga MX",
+    "Giải vô địch quốc gia Brazil Serie A", "Giải vô địch quốc gia Brazil (Serie A)",
+    "Giải Vô địch Quốc gia Ả Rập Xê Út",           # Saudi Pro League
+    "Giải Vô địch Quốc gia Thổ Nhĩ Kỳ",            # Süper Lig
+    "Giải Vô địch Quốc gia Việt Nam VLeague 1",    # V-League
+    "Giải Vô địch Quốc gia Đan Mạch",
+    "Giải Ngoại hạng Nga",                         # Russian Premier League
+    "Giải Ngoại hạng Scotland",                    # Scottish Premiership
+    "Giải Vô địch Quốc gia Áo",
+    "Giải Vô địch Quốc gia Cộng hòa Séc",
+    "Giải Vô địch Quốc gia Ba Lan",                # Ekstraklasa
+    "Giải Vô địch Quốc gia Colombia",
+    "Giải Vô địch Quốc gia Uruguay",
+    "Giải Vô địch Quốc gia Romania Liga I", "Giải Vô địch Quốc gia Romania (Liga I)",
 )
 
 
@@ -448,6 +476,39 @@ def init_db() -> None:
                     )
                 """)
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_goals_match ON match_goals(match_id, goal_number)")
+
+                # Layer C: AI-generated structured pattern per finished match.
+                # One row per (match_id, model) so re-runs with a different model
+                # don't clobber each other; the sweep upserts on conflict. signals
+                # / tags / prediction / base_rate / raw_features are JSONB so we
+                # can later aggregate them into "công thức" without reparsing text.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS match_patterns (
+                        id            BIGSERIAL PRIMARY KEY,
+                        match_id      TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+                        model         TEXT NOT NULL DEFAULT '',
+                        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        summary       TEXT NOT NULL DEFAULT '',
+                        signals       JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        tags          TEXT[] NOT NULL DEFAULT '{}',
+                        prediction    JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        confidence    REAL,
+                        caveats       JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        open_hc       TEXT,
+                        open_ou       TEXT,
+                        base_rate     JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        raw_features  JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        raw_content   TEXT NOT NULL DEFAULT '',
+                        finish_reason TEXT,
+                        parse_ok      BOOLEAN NOT NULL DEFAULT FALSE,
+                        UNIQUE (match_id, model)
+                    )
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_patterns_match ON match_patterns(match_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_patterns_created ON match_patterns(created_at DESC)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_patterns_tags ON match_patterns USING GIN(tags)")
+
 
                 # Singleton row holding Telegram alert configuration. id=1 enforced
                 # by CHECK so admin UI cannot accidentally create siblings.
@@ -1711,6 +1772,192 @@ def compute_pattern_stats(
         "bucket": _aggregate(bucket),
         "overall": _aggregate(rows),
         "by_open_hc": by_open_hc,
+    }
+
+
+# ---------------------------------------------------------------------------
+# match_patterns CRUD (Layer C persistence) — feeds the sweep + aggregation
+# ---------------------------------------------------------------------------
+
+def get_unprocessed_ft_matches(
+    model: str,
+    limit: int = 25,
+    prestigious_only: bool = True,
+    min_odds_snapshots: int = 4,
+) -> list[dict[str, Any]]:
+    """FT matches that have no match_patterns row for `model` yet.
+
+    Ordered oldest-first so a backfill drains the backlog deterministically and
+    newly-finished matches are picked up on later sweeps. Requires a minimum
+    number of odds snapshots so we don't waste an LLM call on a match with no
+    usable line history.
+    """
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            f"""
+            SELECT m.id, m.competition, m.home, m.away,
+                   m.home_score, m.away_score, m.start_time_utc
+              FROM matches m
+              JOIN (
+                  SELECT match_id, count(*) AS snaps
+                    FROM match_odds_history
+                   GROUP BY match_id
+              ) o ON o.match_id = m.id
+             WHERE m.status = 'FT'
+               AND m.home_score IS NOT NULL AND m.away_score IS NOT NULL
+               AND o.snaps >= %s
+               AND {_EXCLUDE_COMP_SQL}
+               AND NOT EXISTS (
+                   SELECT 1 FROM match_patterns p
+                    WHERE p.match_id = m.id AND p.model = %s
+               )
+             ORDER BY m.start_time_utc ASC
+             LIMIT %s
+            """,
+            [min_odds_snapshots] + _EXCLUDE_COMP_PATTERNS + [model, limit],
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+    if prestigious_only:
+        rows = [r for r in rows if is_prestigious(r.get("competition"))]
+    return rows
+
+
+def count_pattern_progress(model: str, prestigious_only: bool = True) -> dict[str, Any]:
+    """How many eligible FT matches are processed vs pending for `model`."""
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            f"""
+            SELECT m.id, m.competition,
+                   EXISTS (SELECT 1 FROM match_patterns p
+                            WHERE p.match_id = m.id AND p.model = %s) AS done
+              FROM matches m
+             WHERE m.status = 'FT'
+               AND m.home_score IS NOT NULL AND m.away_score IS NOT NULL
+               AND {_EXCLUDE_COMP_SQL}
+            """,
+            [model] + _EXCLUDE_COMP_PATTERNS,
+        )
+        rows = cur.fetchall()
+    if prestigious_only:
+        rows = [r for r in rows if is_prestigious(r["competition"])]
+    done = sum(1 for r in rows if r["done"])
+    return {"model": model, "eligible": len(rows), "processed": done,
+            "pending": len(rows) - done, "prestigious_only": prestigious_only}
+
+
+def upsert_match_pattern(
+    match_id: str,
+    model: str,
+    *,
+    summary: str = "",
+    signals: Optional[list] = None,
+    tags: Optional[list[str]] = None,
+    prediction: Optional[dict] = None,
+    confidence: Optional[float] = None,
+    caveats: Optional[list] = None,
+    open_hc: Optional[str] = None,
+    open_ou: Optional[str] = None,
+    base_rate: Optional[dict] = None,
+    raw_features: Optional[dict] = None,
+    raw_content: str = "",
+    finish_reason: Optional[str] = None,
+    parse_ok: bool = False,
+) -> int:
+    """Insert or update the pattern row for (match_id, model). Returns row id."""
+    J = psycopg2.extras.Json
+    with _connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO match_patterns (
+                match_id, model, summary, signals, tags, prediction, confidence,
+                caveats, open_hc, open_ou, base_rate, raw_features, raw_content,
+                finish_reason, parse_ok
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (match_id, model) DO UPDATE SET
+                updated_at    = NOW(),
+                summary       = EXCLUDED.summary,
+                signals       = EXCLUDED.signals,
+                tags          = EXCLUDED.tags,
+                prediction    = EXCLUDED.prediction,
+                confidence    = EXCLUDED.confidence,
+                caveats       = EXCLUDED.caveats,
+                open_hc       = EXCLUDED.open_hc,
+                open_ou       = EXCLUDED.open_ou,
+                base_rate     = EXCLUDED.base_rate,
+                raw_features  = EXCLUDED.raw_features,
+                raw_content   = EXCLUDED.raw_content,
+                finish_reason = EXCLUDED.finish_reason,
+                parse_ok      = EXCLUDED.parse_ok
+            RETURNING id
+            """,
+            (
+                match_id, model, summary or "", J(signals or []),
+                list(tags or []), J(prediction or {}), confidence,
+                J(caveats or []), open_hc, open_ou, J(base_rate or {}),
+                J(raw_features or {}), raw_content or "", finish_reason, parse_ok,
+            ),
+        )
+        return cur.fetchone()[0]
+
+
+def get_match_pattern(match_id: str, model: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """Most recent stored pattern for a match (optionally pinned to a model)."""
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        if model:
+            cur.execute(
+                "SELECT * FROM match_patterns WHERE match_id=%s AND model=%s "
+                "ORDER BY updated_at DESC LIMIT 1", (match_id, model))
+        else:
+            cur.execute(
+                "SELECT * FROM match_patterns WHERE match_id=%s "
+                "ORDER BY updated_at DESC LIMIT 1", (match_id,))
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def aggregate_patterns(prestigious_only: bool = True, limit: int = 2000) -> dict[str, Any]:
+    """Roll stored patterns up into a tag/signal frequency view — the raw
+    material for distilling "công thức". Joins to matches so we can filter by
+    prestige and report against actual outcomes.
+    """
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """
+            SELECT p.tags, p.confidence, p.open_hc, p.open_ou,
+                   p.prediction, m.competition, m.home_score, m.away_score
+              FROM match_patterns p
+              JOIN matches m ON m.id = p.match_id
+             WHERE p.parse_ok = TRUE
+             ORDER BY p.created_at DESC
+             LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+
+    if prestigious_only:
+        rows = [r for r in rows if is_prestigious(r.get("competition"))]
+
+    from collections import Counter
+    tag_counts: Counter = Counter()
+    conf_sum = conf_n = 0.0
+    for r in rows:
+        for t in (r.get("tags") or []):
+            tag_counts[t] += 1
+        if r.get("confidence") is not None:
+            conf_sum += r["confidence"]
+            conf_n += 1
+    return {
+        "n_patterns": len(rows),
+        "avg_confidence": round(conf_sum / conf_n, 3) if conf_n else None,
+        "top_tags": tag_counts.most_common(30),
+        "prestigious_only": prestigious_only,
     }
 
 

@@ -564,6 +564,197 @@ function wireNote() {
   $('note-text').addEventListener('input', (e) => { S.note_text = e.target.value; });
 }
 
+// ─── AI status badge ───────────────────────────────────────────────────────
+
+function _setAIBadge({ dot, label, btnEnabled }) {
+  const d = $('ai-dot');
+  const l = $('ai-label');
+  const b = $('ai-check-btn');
+  const p = $('btn-ai-predict');
+  if (d) d.className = 'ai-dot ' + dot;
+  if (l) l.innerHTML = label;
+  if (b) b.disabled = !btnEnabled;
+  if (p) {
+    p.disabled = !btnEnabled;
+    p.title = btnEnabled ? 'AI phân tích trận hiện tại (grounded trên base-rate)' : 'Cần cấu hình AI';
+  }
+}
+
+async function loadAIStatus() {
+  try {
+    const r = await fetch('/api/ai/status');
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    if (!d.configured) {
+      _setAIBadge({
+        dot: 'off',
+        label: '<span class="dim">AI: chưa cấu hình</span>',
+        btnEnabled: false,
+      });
+      const badge = $('ai-badge');
+      if (badge) badge.title = 'Đặt AI_BASE_URL + AI_API_KEY + AI_MODEL trong .env để bật AI';
+      return;
+    }
+    _setAIBadge({
+      dot: 'off',
+      label: 'AI: <b>' + escapeHtml(d.model) + '</b>',
+      btnEnabled: true,
+    });
+    const badge = $('ai-badge');
+    if (badge) badge.title = `Endpoint: ${d.base_url}\nModel: ${d.model}\nKey: ${d.api_key_masked}\nBấm "Kiểm tra" để xác nhận kết nối`;
+  } catch (e) {
+    _setAIBadge({
+      dot: 'err',
+      label: '<span class="dim">AI: lỗi tải trạng thái</span>',
+      btnEnabled: false,
+    });
+  }
+}
+
+async function checkAI() {
+  _setAIBadge({ dot: 'checking', label: 'AI: đang kiểm tra…', btnEnabled: false });
+  try {
+    const r = await fetch('/api/ai/check', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      _setAIBadge({
+        dot: 'on',
+        label: 'AI: <b>' + escapeHtml(d.model) + '</b> <span class="dim">· ' + d.latency_ms + 'ms</span>',
+        btnEnabled: true,
+      });
+      toast('AI hoạt động · ' + d.model + ' · ' + d.latency_ms + 'ms', 'ok');
+    } else {
+      _setAIBadge({
+        dot: 'err',
+        label: '<span class="dim">AI: không kết nối được</span>',
+        btnEnabled: !!d.configured,
+      });
+      toast('AI lỗi: ' + (d.error || 'không xác định'), 'err');
+    }
+  } catch (e) {
+    _setAIBadge({ dot: 'err', label: '<span class="dim">AI: lỗi kiểm tra</span>', btnEnabled: true });
+    toast('Không gọi được /api/ai/check: ' + e, 'err');
+  }
+}
+
+// ─── AI grounded prediction ─────────────────────────────────────────────────
+
+function _confColor(c) {
+  return c >= 0.66 ? 'var(--green)' : (c >= 0.4 ? 'var(--orange)' : 'var(--red)');
+}
+
+function _leanLabel(v) {
+  return ({ favorite: 'Nghiêng cửa trên', underdog: 'Nghiêng cửa dưới',
+            over: 'Nghiêng Tài', under: 'Nghiêng Xỉu', no_edge: 'Không rõ edge' }[v]) || (v || '—');
+}
+
+function _pct(x) { return (x === null || x === undefined) ? '—' : (Math.round(x * 1000) / 10) + '%'; }
+
+function _renderAIResult(d) {
+  const p = (d.parsed && typeof d.parsed === 'object') ? d.parsed : null;
+  const st = d.stats || {};
+  const bk = st.bucket || {};
+  const ov = st.overall || {};
+  const conf = p && typeof p.confidence === 'number' ? p.confidence : null;
+  let html = '';
+
+  if (p) {
+    if (p.summary) {
+      html += '<div class="ai-card"><h4>Tóm tắt</h4><div class="ai-summary">' + escapeHtml(p.summary) + '</div></div>';
+    }
+    const pr = p.prediction || {};
+    html += '<div class="ai-card"><h4>Dự đoán</h4><div class="ai-pred-grid">';
+    if (pr.score) html += '<span class="ai-pill">Tỉ số: <b>' + escapeHtml(String(pr.score)) + '</b></span>';
+    html += '<span class="ai-pill">Chấp: <b>' + escapeHtml(_leanLabel(pr.handicap_lean)) + '</b></span>';
+    html += '<span class="ai-pill">Tài/Xỉu: <b>' + escapeHtml(_leanLabel(pr.ou_lean)) + '</b></span>';
+    html += '</div>';
+    if (conf !== null) {
+      html += '<div class="ai-meta">Confidence: ' + _pct(conf) + '</div>' +
+              '<div class="ai-conf-bar"><div class="ai-conf-fill" style="width:' +
+              Math.round(conf * 100) + '%;background:' + _confColor(conf) + '"></div></div>';
+    }
+    html += '</div>';
+    if (Array.isArray(p.signals) && p.signals.length) {
+      html += '<div class="ai-card"><h4>Tín hiệu</h4><ul class="ai-list">' +
+              p.signals.map(s => '<li>' + escapeHtml(String(s)) + '</li>').join('') + '</ul></div>';
+    }
+    if (Array.isArray(p.caveats) && p.caveats.length) {
+      html += '<div class="ai-card"><h4>Lưu ý</h4><ul class="ai-list">' +
+              p.caveats.map(s => '<li>' + escapeHtml(String(s)) + '</li>').join('') + '</ul></div>';
+    }
+  } else {
+    html += '<div class="ai-card"><h4>Kết quả (raw)</h4><div class="ai-raw">' +
+            escapeHtml(d.content || '(rỗng)') + '</div></div>';
+  }
+
+  // Base-rate evidence — the deterministic numbers the model was grounded on.
+  const f = st.filters || {};
+  html += '<div class="ai-card"><h4>Base-rate (bằng chứng)</h4>';
+  html += '<div class="ai-base">' +
+    '<span>Bucket HC: <b>' + escapeHtml(String(f.open_hc ?? '—')) + '</b> · OU <b>' + escapeHtml(String(f.open_ou ?? '—')) + '</b></span>' +
+    '<span>n bucket: <b>' + (bk.n || 0) + '</b></span>' +
+    '<span>n tổng: <b>' + (st.n_total || 0) + '</b></span>' +
+    '</div>';
+  html += '<div class="ai-base" style="margin-top:6px">' +
+    '<span>Cover cửa trên: <b>' + _pct(bk.fav_cover_rate) + '</b> (n=' + (bk.fav_cover_n || 0) + ')</span>' +
+    '<span>Tài: <b>' + _pct(bk.over_rate) + '</b></span>' +
+    '<span>BTTS: <b>' + _pct(bk.btts_rate) + '</b></span>' +
+    '<span>Bàn TB: <b>' + (bk.avg_goals ?? '—') + '</b></span>' +
+    '<span>Hòa: <b>' + _pct(bk.draw_rate) + '</b></span>' +
+    '</div>';
+  if (bk.n < 30) {
+    html += '<div class="ai-meta" style="color:var(--orange)">⚠ Sample bucket nhỏ (n=' + (bk.n || 0) +
+            '), base-rate tham khảo có sai số lớn — đối chiếu n tổng (' + (st.n_total || 0) + ').</div>';
+  }
+  html += '</div>';
+
+  const u = d.usage || {};
+  html += '<div class="ai-meta">Model: ' + escapeHtml(d.model || '—') +
+          (u.total_tokens ? ' · ' + u.total_tokens + ' tokens' : '') +
+          (d.reasoning_chars ? ' · reasoning ' + d.reasoning_chars + ' ký tự' : '') + '</div>';
+
+  $('ai-modal-body').innerHTML = html;
+  const mm = $('ai-modal-model');
+  if (mm) mm.textContent = d.model || '';
+}
+
+async function aiPredict() {
+  if (!S.csv_blob) { toast('Chưa có dữ liệu', 'warn'); return; }
+  const btn = $('btn-ai-predict');
+  if (btn) { btn.disabled = true; btn.classList.add('busy'); btn.textContent = '🤖 Đang phân tích…'; }
+  // Sync prediction inputs into state (mirror runCompute behaviour).
+  const pfh = $('pred-fh').value === '' ? null : parseInt($('pred-fh').value, 10);
+  const pfa = $('pred-fa').value === '' ? null : parseInt($('pred-fa').value, 10);
+  try {
+    const r = await fetch('/api/analyzer/ai-predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        csv_blob: S.csv_blob,
+        overrides: S.overrides,
+        pred_fh: pfh,
+        pred_fa: pfa,
+        meta: S.meta,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok || d.ok === false) {
+      toast('AI lỗi: ' + (d.error || d.detail || r.status), 'err');
+      return;
+    }
+    _renderAIResult(d);
+    openAIModal();
+  } catch (e) {
+    toast('Không gọi được AI: ' + e, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('busy'); btn.textContent = '🤖 AI dự đoán'; }
+  }
+}
+
+function openAIModal() { const m = $('ai-modal-bg'); if (m) m.classList.add('open'); }
+function closeAIModal() { const m = $('ai-modal-bg'); if (m) m.classList.remove('open'); }
+function closeAIModalBg(e) { if (e.target === $('ai-modal-bg')) closeAIModal(); }
+
 // ─── Init ──────────────────────────────────────────────────────────────────
 
 async function loadFromMatch(matchId) {
@@ -617,6 +808,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderAnalysis();
   wireDrop();
   wireNote();
+  loadAIStatus();
 
   // Wire match picker search
   const mpSearch = $('mp-search');

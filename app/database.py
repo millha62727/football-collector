@@ -1519,6 +1519,201 @@ def advanced_search(
     return candidates
 
 
+# ---------------------------------------------------------------------------
+# Pattern base-rates (Layer B) — empirical "công thức" from finished matches
+# ---------------------------------------------------------------------------
+# These feed the AI layer (app/analyzer/ai_pattern.py) so predictions are
+# grounded in real historical frequencies instead of hallucinated numbers.
+
+def _to_float(v: Any) -> Optional[float]:
+    """Parse a handicap/OU string to float; None if blank/garbage."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _split_quarter(line: float) -> list[float]:
+    """Asian quarter-ball split: -0.75 → [-1.0, -0.5]; whole/half → [line]."""
+    if abs(round(line * 2) - line * 2) < 1e-9:
+        return [line]
+    return [line - 0.25, line + 0.25]
+
+
+def _cover_score(line: float, margin: float) -> float:
+    """Cover outcome for the side `line` applies to (line negative for favorite).
+
+    Returns 1.0 win, 0.5 half-win/push, 0.0 loss — quarter lines averaged.
+    `margin` = (that side's score) − (opponent score).
+    """
+    parts = _split_quarter(line)
+    s = 0.0
+    for p in parts:
+        eff = margin + p
+        s += 1.0 if eff > 1e-9 else (0.5 if abs(eff) <= 1e-9 else 0.0)
+    return s / len(parts)
+
+
+def _ou_score(line: float, total: float) -> float:
+    """Over outcome: 1.0 over wins, 0.5 push, 0.0 under — quarter lines averaged."""
+    parts = _split_quarter(line)
+    s = 0.0
+    for p in parts:
+        s += 1.0 if total > p + 1e-9 else (0.5 if abs(total - p) <= 1e-9 else 0.0)
+    return s / len(parts)
+
+
+def compute_pattern_stats(
+    open_hc: Optional[str] = None,
+    open_ou: Optional[str] = None,
+    prestigious_only: bool = False,
+    limit_matches: int = 5000,
+) -> dict[str, Any]:
+    """Empirical base-rates over finished matches, grounded on opening odds.
+
+    For every FT match we take its FIRST odds snapshot (opening line) and final
+    score, then compute: favorite-cover rate, over rate, avg goals, BTTS, 1X2.
+    `open_hc`/`open_ou` (canonical strings, e.g. '-0.75' / '2.5') restrict to a
+    bucket; omit for the overall picture plus a top-bucket breakdown.
+
+    Returns a dict consumed by the AI layer and the analyzer UI.
+    """
+    open_hc_n = _norm_match_str(open_hc)
+    open_ou_n = _norm_match_str(open_ou)
+
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            f"""
+            WITH first_snap AS (
+                SELECT DISTINCT ON (match_id)
+                       match_id,
+                       home_handicap AS open_hh,
+                       away_handicap AS open_ah,
+                       ou_line       AS open_ou
+                  FROM match_odds_history
+                 ORDER BY match_id, captured_at ASC
+            )
+            SELECT m.id, m.competition, m.home_score, m.away_score,
+                   f.open_hh, f.open_ah, f.open_ou
+              FROM matches m
+              JOIN first_snap f ON f.match_id = m.id
+             WHERE m.status = 'FT'
+               AND m.home_score IS NOT NULL AND m.away_score IS NOT NULL
+               AND {_EXCLUDE_COMP_SQL}
+             ORDER BY m.start_time_utc DESC
+             LIMIT %s
+            """,
+            _EXCLUDE_COMP_PATTERNS + [limit_matches],
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+    if prestigious_only:
+        rows = [r for r in rows if is_prestigious(r.get("competition"))]
+
+    n_total = len(rows)
+
+    def _fav_line_side(r) -> tuple[Optional[float], Optional[str]]:
+        hh = _to_float(r.get("open_hh"))
+        ah = _to_float(r.get("open_ah"))
+        if hh is not None and hh < 0:
+            return hh, "home"
+        if ah is not None and ah < 0:
+            return ah, "away"
+        return 0.0, "level"
+
+    def _bucket_hc(r) -> Optional[str]:
+        line, _ = _fav_line_side(r)
+        return _norm_match_str(line) if line is not None else None
+
+    # Apply the requested bucket filter.
+    bucket = rows
+    if open_hc_n is not None:
+        bucket = [r for r in bucket if _bucket_hc(r) == open_hc_n]
+    if open_ou_n is not None:
+        bucket = [r for r in bucket if _norm_match_str(r.get("open_ou")) == open_ou_n]
+
+    def _aggregate(sample: list[dict]) -> dict[str, Any]:
+        from collections import Counter
+        n = len(sample)
+        if n == 0:
+            return {"n": 0}
+        cover_sum = cover_n = 0.0
+        over_sum = over_n = 0.0
+        goals_sum = btts = fav_win = draw = 0
+        scores: Counter = Counter()
+        for r in sample:
+            hs = int(r.get("home_score") or 0)
+            aw = int(r.get("away_score") or 0)
+            total = hs + aw
+            goals_sum += total
+            scores[f"{hs}-{aw}"] += 1
+            if hs > 0 and aw > 0:
+                btts += 1
+            if hs == aw:
+                draw += 1
+            line, side = _fav_line_side(r)
+            if side in ("home", "away") and line is not None:
+                margin = (hs - aw) if side == "home" else (aw - hs)
+                cover_sum += _cover_score(line, margin)
+                cover_n += 1
+                if margin > 0:
+                    fav_win += 1
+            ou = _to_float(r.get("open_ou"))
+            if ou is not None and ou > 0:
+                over_sum += _ou_score(ou, total)
+                over_n += 1
+        return {
+            "n": n,
+            "fav_cover_rate": round(cover_sum / cover_n, 4) if cover_n else None,
+            "fav_cover_n": int(cover_n),
+            "over_rate": round(over_sum / over_n, 4) if over_n else None,
+            "over_n": int(over_n),
+            "avg_goals": round(goals_sum / n, 3),
+            "btts_rate": round(btts / n, 4),
+            "fav_win_rate": round(fav_win / cover_n, 4) if cover_n else None,
+            "draw_rate": round(draw / n, 4),
+            "score_dist": scores.most_common(8),
+        }
+
+    # Top opening-HC buckets (only when no HC filter, for the breakdown view).
+    by_open_hc: list[dict[str, Any]] = []
+    if open_hc_n is None:
+        from collections import defaultdict
+        groups: dict[str, list[dict]] = defaultdict(list)
+        for r in rows:
+            b = _bucket_hc(r)
+            if b is not None:
+                groups[b].append(r)
+        ranked = sorted(groups.items(), key=lambda kv: len(kv[1]), reverse=True)[:10]
+        for hc, sample in ranked:
+            agg = _aggregate(sample)
+            by_open_hc.append({
+                "open_hc": hc,
+                "n": agg["n"],
+                "fav_cover_rate": agg.get("fav_cover_rate"),
+                "over_rate": agg.get("over_rate"),
+                "avg_goals": agg.get("avg_goals"),
+            })
+
+    return {
+        "n_total": n_total,
+        "filters": {
+            "open_hc": open_hc_n,
+            "open_ou": open_ou_n,
+            "prestigious_only": prestigious_only,
+        },
+        "bucket": _aggregate(bucket),
+        "overall": _aggregate(rows),
+        "by_open_hc": by_open_hc,
+    }
+
+
 def get_timeline_stats(period: str = "day", target_date: Optional[str] = None) -> dict:
     """Aggregated stats for a single date (or period anchored at NOW()).
 

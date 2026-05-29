@@ -11,6 +11,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from ..auth import require_auth
 from ..database import get_match_by_id, get_odds_history_for_analyzer
+from . import ai_client as AI
+from . import ai_pattern as AIP
 from . import parser as P
 from . import storage as ST
 
@@ -117,6 +119,26 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
 .btn.save:hover{background:var(--green);color:#000}
 .btn.open{background:rgba(248,81,73,.12);border-color:var(--red);color:var(--red)}
 .btn.open:hover{background:var(--red);color:#fff}
+.btn.ai{background:rgba(188,140,255,.12);border-color:var(--purple);color:var(--purple)}
+.btn.ai:hover:not(:disabled){background:var(--purple);color:#000}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.ai.busy{opacity:.6;cursor:wait}
+
+/* AI result cards */
+.ai-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:10px}
+.ai-card h4{margin:0 0 6px;font-size:12px;color:var(--purple);text-transform:uppercase;letter-spacing:.04em}
+.ai-summary{font-size:14px;line-height:1.5;color:var(--text)}
+.ai-pred-grid{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
+.ai-pill{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-size:13px}
+.ai-pill b{color:var(--primary)}
+.ai-conf-bar{height:8px;border-radius:4px;background:var(--surface);overflow:hidden;margin-top:6px}
+.ai-conf-fill{height:100%;background:linear-gradient(90deg,var(--orange),var(--green))}
+.ai-list{margin:4px 0 0;padding-left:18px;font-size:13px;line-height:1.55}
+.ai-list li{margin-bottom:2px}
+.ai-meta{font-size:11px;color:var(--muted);margin-top:6px}
+.ai-raw{white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:11px;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:8px;max-height:240px;overflow:auto}
+.ai-base{font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 16px}
+.ai-base b{color:var(--text)}
 
 /* modal */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:100}
@@ -136,6 +158,20 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
 .toast.warn{border-color:var(--orange);color:var(--orange)}
 .muted{color:var(--muted)}
 .no-data{color:var(--muted);text-align:center;padding:24px}
+
+/* AI status badge (header) */
+.ai-badge{display:flex;align-items:center;gap:7px;padding:4px 10px;border-radius:var(--r);border:1px solid var(--border);background:var(--card);font-size:12px;white-space:nowrap}
+.ai-badge .ai-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:0 0 auto;transition:background .2s}
+.ai-badge .ai-dot.on{background:var(--green);box-shadow:0 0 6px rgba(63,185,80,.6)}
+.ai-badge .ai-dot.off{background:var(--muted)}
+.ai-badge .ai-dot.err{background:var(--red);box-shadow:0 0 6px rgba(248,81,73,.6)}
+.ai-badge .ai-dot.checking{background:var(--orange);animation:ai-pulse 1s ease-in-out infinite}
+@keyframes ai-pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.ai-badge #ai-label{color:var(--text)}
+.ai-badge #ai-label .dim{color:var(--muted)}
+.ai-badge .ai-check{padding:2px 9px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;font-size:11px;font-family:inherit;transition:all .15s}
+.ai-badge .ai-check:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
+.ai-badge .ai-check:disabled{opacity:.5;cursor:default}
 </style>
 </head>
 <body>
@@ -144,6 +180,11 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
   <div class="hdr-logo">&#x26BD; Analyzer</div>
   <a href="/">&larr; Dashboard</a>
   <div class="hdr-spacer"></div>
+  <div class="ai-badge" id="ai-badge" title="Trạng thái AI LLM (OpenAI-compatible)">
+    <span class="ai-dot off" id="ai-dot"></span>
+    <span id="ai-label"><span class="dim">AI: …</span></span>
+    <button class="ai-check" id="ai-check-btn" onclick="checkAI()" disabled>Kiểm tra</button>
+  </div>
   <span class="muted" id="user-info"></span>
   <button class="btn-sm" onclick="goDisguise()">&#x1F504; &#x110;&#x1ED5;i</button>
   <form method="post" action="/logout" style="display:inline">
@@ -227,6 +268,7 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
     <div class="actions">
       <button class="btn" id="btn-edit" onclick="toggleEdit()">✏ Sửa</button>
       <button class="btn run" onclick="runCompute()">▶ Run</button>
+      <button class="btn ai" id="btn-ai-predict" onclick="aiPredict()" disabled title="Cần cấu hình AI">🤖 AI dự đoán</button>
       <button class="btn save" onclick="saveSession()">💾 Save</button>
       <button class="btn open" onclick="openModal()">📂 Open</button>
       <button class="btn" onclick="exportJSON()">⬇ Export JSON</button>
@@ -264,6 +306,18 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
         <tbody id="mp-body"><tr><td colspan="5" class="empty">Đang tải...</td></tr></tbody>
       </table>
     </div>
+  </div>
+</div>
+
+<!-- AI prediction modal -->
+<div class="modal-bg" id="ai-modal-bg" onclick="closeAIModalBg(event)">
+  <div class="modal" style="width:760px;max-width:96vw">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <h3 style="margin:0">🤖 AI phân tích</h3>
+      <span id="ai-modal-model" style="font-size:11px;color:var(--muted)"></span>
+      <button onclick="closeAIModal()" style="margin-left:auto;background:none;border:0;color:var(--muted);cursor:pointer;font-size:20px;line-height:1">&times;</button>
+    </div>
+    <div id="ai-modal-body" style="max-height:70vh;overflow-y:auto"></div>
   </div>
 </div>
 
@@ -448,6 +502,75 @@ async def api_import(
         "filename": data.get("filepath") or file.filename or "",
         "needs_csv": True,
     })
+
+
+# ---------------------------------------------------------------------------
+# AI (OpenAI-compatible) — optional, env-gated
+# ---------------------------------------------------------------------------
+
+@router.get("/api/ai/status")
+async def api_ai_status(user: str = Depends(require_auth)):
+    """Resolved AI config (no round-trip). Drives the header badge.
+
+    The API key is masked server-side — never returned in full.
+    """
+    return JSONResponse(AI.diagnose())
+
+
+@router.post("/api/ai/check")
+async def api_ai_check(user: str = Depends(require_auth)):
+    """Real connectivity probe: sends a minimal completion and reports latency.
+
+    Never 500s on an upstream failure — the failure is reported in the body so
+    the UI can show a precise reason. Returns 400 only when AI isn't configured.
+    """
+    result = await AI.check()
+    status = 200 if result.get("ok") else (400 if not result.get("configured") else 502)
+    return JSONResponse(result, status_code=status)
+
+
+@router.post("/api/analyzer/ai-predict")
+async def api_ai_predict(
+    payload: dict[str, Any] = Body(...),
+    user: str = Depends(require_auth),
+):
+    """Grounded LLM analysis of the current analyzer state.
+
+    Sends deterministic features (parser.compute) + empirical base-rates
+    (database.compute_pattern_stats) to the model. The LLM only interprets the
+    numbers it is given — it never invents sample sizes or rates. Advisory only.
+
+    Returns 400 when AI isn't configured, 502 on upstream/LLM failure.
+    """
+    if not AI.is_configured():
+        raise HTTPException(400, "AI chưa được cấu hình")
+
+    csv_text = payload.get("csv_blob") or ""
+    if not csv_text:
+        raise HTTPException(400, "csv_blob required")
+
+    overrides_raw = payload.get("overrides") or {}
+    overrides = {int(k): v for k, v in overrides_raw.items() if isinstance(v, dict)}
+    pred_fh = payload.get("pred_fh")
+    pred_fa = payload.get("pred_fa")
+    pred_fh = int(pred_fh) if pred_fh not in (None, "") else None
+    pred_fa = int(pred_fa) if pred_fa not in (None, "") else None
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    prestigious_only = bool(payload.get("prestigious_only", False))
+
+    rows = P.read_csv_text(csv_text)
+    try:
+        out = await AIP.analyze_match(
+            rows,
+            meta=meta,
+            pred_fh=pred_fh,
+            pred_fa=pred_fa,
+            overrides=overrides,
+            prestigious_only=prestigious_only,
+        )
+    except Exception as e:  # upstream/LLM/parse failure — never 500
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
+    return JSONResponse({"ok": True, **out})
 
 
 # ---------------------------------------------------------------------------

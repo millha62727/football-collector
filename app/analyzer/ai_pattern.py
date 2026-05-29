@@ -8,6 +8,7 @@ The LLM's job is to explain and synthesize, not to be the source of numbers.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Optional
 
 from ..database import compute_pattern_stats
@@ -19,6 +20,21 @@ def _first_present_milestone(result: dict[str, Any]) -> Optional[dict[str, Any]]
     for m in result.get("milestones") or []:
         if m:
             return m
+    return None
+
+
+def _opening_ou_fallback(rows: list[dict[str, str]]) -> Optional[float]:
+    """First non-zero O/U line from the opening snapshot.
+
+    Milestone `c` is the mode of O/U over the 1H_2'..1H_5' window, which misses
+    when DB odds history is sparse (a handful of snapshots). Fall back to the
+    first row's line so the AI bucket aligns with Layer B (which keys off the
+    opening snapshot too).
+    """
+    for r in rows:
+        v = P.to_f(r.get("Over/Under Line", 0))
+        if v and v > 0:
+            return v
     return None
 
 
@@ -34,13 +50,16 @@ def build_feature_digest(
     result = P.compute(rows, overrides=overrides, pred_fh=pred_fh, pred_fa=pred_fa)
     first = _first_present_milestone(result) or {}
     goals = P.get_goals(rows)
+    opening_ou = first.get("c")
+    if opening_ou is None:
+        opening_ou = _opening_ou_fallback(rows)
     return {
         "meta": meta or {},
         "real_score": [result.get("real_fh"), result.get("real_fa")],
         "effective_prediction": [result.get("effective_fh"), result.get("effective_fa")],
         "opening_hc": first.get("a"),
         "opening_hc_side": first.get("a_side"),
-        "opening_ou": first.get("c"),
+        "opening_ou": opening_ou,
         "goal_count_detected": len(goals),
         "goal_sequence": [
             {"score": f"{h}-{a}", "row_index": idx, "minute": P.half_to_minute(rows[idx].get("Half", ""))}
@@ -99,21 +118,53 @@ Trả về JSON đúng schema:
     data = await AI.chat(
         [{"role": "user", "content": prompt}],
         temperature=0.0,
-        max_tokens=900,
-        timeout=60,
+        # Reasoning models (deepseek-v4, claude *-thinking) spend a large slice
+        # of the budget on reasoning_content BEFORE emitting `content`. With a
+        # tight cap the response finishes (finish_reason=length) with empty
+        # content. 4000 leaves room for reasoning + the JSON answer.
+        max_tokens=4000,
+        timeout=90,
     )
     content = AI.extract_content(data)
-    parsed: Optional[dict[str, Any]] = None
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError:
-        parsed = None
+    parsed = _parse_json_loose(content)
     return {
         "features": features,
         "stats": stats,
         "model": data.get("model"),
         "content": content,
         "parsed": parsed,
+        "finish_reason": ((data.get("choices") or [{}])[0]).get("finish_reason"),
         "reasoning_chars": len(AI.extract_reasoning(data)),
         "usage": data.get("usage") or {},
     }
+
+
+def _parse_json_loose(text: str) -> Optional[dict[str, Any]]:
+    """Best-effort JSON extraction from an LLM reply.
+
+    Handles: clean JSON, ```json fenced blocks, and leading/trailing prose by
+    slicing to the outermost balanced braces. Returns None if nothing parses.
+    """
+    if not text:
+        return None
+    s = text.strip()
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+    # Strip markdown fences.
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", s, re.S)
+    if fence:
+        try:
+            return json.loads(fence.group(1))
+        except json.JSONDecodeError:
+            pass
+    # Fall back to the outermost {...} span.
+    start = s.find("{")
+    end = s.rfind("}")
+    if 0 <= start < end:
+        try:
+            return json.loads(s[start:end + 1])
+        except json.JSONDecodeError:
+            return None
+    return None

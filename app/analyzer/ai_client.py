@@ -118,11 +118,17 @@ async def chat(
     temperature: float = 0.0,
     max_tokens: int = 512,
     timeout: int = _TIMEOUT,
+    reasoning_effort: Optional[str] = None,
 ) -> dict[str, Any]:
     """Low-level chat completion. Raises RuntimeError on any failure.
 
     Returns the parsed JSON response body. Callers extract
     `data["choices"][0]["message"]["content"]` themselves.
+
+    `reasoning_effort` overrides the AI_REASONING_EFFORT env default for this
+    call only — pass an explicit level (low/medium/...) for tasks that don't
+    need deep reasoning, or "" to force-omit the field. Invalid values fall
+    back to the env default.
     """
     if not is_configured():
         raise RuntimeError(
@@ -139,7 +145,11 @@ async def chat(
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
-    effort = _reasoning_effort()
+    if reasoning_effort is None:
+        effort = _reasoning_effort()
+    else:
+        ro = (reasoning_effort or "").strip().lower()
+        effort = ro if ro in _REASONING_LEVELS else (_reasoning_effort() if reasoning_effort != "" else "")
     if effort:
         body["reasoning_effort"] = effort
     # Provider-specific escape hatch — merged last so it can override anything.

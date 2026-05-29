@@ -73,6 +73,35 @@ def _json_for_prompt(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
+def _trim_stats_for_prompt(stats: dict[str, Any]) -> dict[str, Any]:
+    """Slim the base-rate payload sent to the LLM.
+
+    The full stats dict (10 by_open_hc buckets + score_dist in both bucket and
+    overall) bloats the prompt, which makes a reasoning model burn more of its
+    budget — empirically enough to truncate the answer (finish_reason=length,
+    empty content). The LLM only needs the headline rates + sample sizes; the
+    full object is still returned to the UI separately.
+    """
+    def slim(agg: Optional[dict[str, Any]], keep_scores: bool) -> dict[str, Any]:
+        if not agg:
+            return {}
+        out = {k: agg.get(k) for k in (
+            "n", "fav_cover_rate", "fav_cover_n", "over_rate", "over_n",
+            "avg_goals", "btts_rate", "fav_win_rate", "draw_rate",
+        ) if agg.get(k) is not None}
+        if keep_scores and agg.get("score_dist"):
+            out["score_dist"] = agg["score_dist"][:5]
+        return out
+
+    return {
+        "n_total": stats.get("n_total"),
+        "filters": stats.get("filters"),
+        "bucket": slim(stats.get("bucket"), keep_scores=True),
+        "overall": slim(stats.get("overall"), keep_scores=False),
+        "top_open_hc_buckets": (stats.get("by_open_hc") or [])[:3],
+    }
+
+
 async def analyze_match(
     rows: list[dict[str, str]],
     *,
@@ -102,9 +131,10 @@ NHIỆM VỤ:
 - Đưa nhận định có điều kiện về: kèo chấp favorite-cover, tài/xỉu, và tỉ số hợp lý.
 - Luôn nhắc sample size. Nếu sample nhỏ (<30) phải hạ confidence rõ ràng.
 - Không đưa lời khuyên cá cược chắc thắng. Viết ngắn, thực dụng, tiếng Việt.
+- CHỈ trả JSON, không kèm giải thích ngoài JSON.
 
 FEATURES_JSON={_json_for_prompt(features)}
-BASE_RATE_JSON={_json_for_prompt(stats)}
+BASE_RATE_JSON={_json_for_prompt(_trim_stats_for_prompt(stats))}
 
 Trả về JSON đúng schema:
 {{
@@ -118,10 +148,12 @@ Trả về JSON đúng schema:
     data = await AI.chat(
         [{"role": "user", "content": prompt}],
         temperature=0.0,
-        # Reasoning models (deepseek-v4, claude *-thinking) spend a large slice
-        # of the budget on reasoning_content BEFORE emitting `content`. With a
-        # tight cap the response finishes (finish_reason=length) with empty
-        # content. 4000 leaves room for reasoning + the JSON answer.
+        # This is an INTERPRETATION task — Layer B already computed every number,
+        # so deep reasoning is wasted and (with always-reason models like
+        # deepseek-v4) burns the whole token budget before any `content` is
+        # emitted (finish_reason=length, empty answer). Force a modest effort
+        # regardless of the global AI_REASONING_EFFORT, and keep a generous cap.
+        reasoning_effort="medium",
         max_tokens=4000,
         timeout=90,
     )

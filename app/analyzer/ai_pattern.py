@@ -128,11 +128,11 @@ async def analyze_match(
 
 NHIỆM VỤ:
 - Tóm tắt pattern của trận theo dữ liệu milestone.
-- Đưa nhận định có điều kiện về: kèo chấp favorite-cover, tài/xỉu, và tỉ số hợp lý.
+- Đưa nhận định có điều kiện về: kèo chấp favorite-cover, tài/xỉu, tỉ số hợp lý, và liệu có thêm bàn thắng hay không.
 - Luôn nhắc sample size. Nếu sample nhỏ (<30) phải hạ confidence rõ ràng.
 - Gắn "tags" là các nhãn pattern NGẮN, viết-thường, dùng gạch dưới, để sau gom thành công thức.
   Ví dụ tag hợp lệ: fav_cover, fav_no_cover, over_hit, under_hit, btts, clean_sheet_fav,
-  comeback, line_drifted_up, line_drifted_down, low_scoring, high_scoring, draw, small_sample.
+  comeback, line_drifted_up, line_drifted_down, low_scoring, high_scoring, draw, small_sample, expected_goal_market, unexpected_goals.
 - Không đưa lời khuyên cá cược chắc thắng. Viết ngắn, thực dụng, tiếng Việt.
 - CHỈ trả JSON, không kèm giải thích ngoài JSON.
 
@@ -144,7 +144,7 @@ Trả về JSON đúng schema:
   "summary": "1-2 câu",
   "signals": ["..."],
   "tags": ["fav_cover", "over_hit", "..."],
-  "prediction": {{"score": "x-y", "handicap_lean": "favorite|underdog|no_edge", "ou_lean": "over|under|no_edge"}},
+  "prediction": {{"score": "x-y", "handicap_lean": "favorite|underdog|no_edge", "ou_lean": "over|under|no_edge", "more_goals_likely": true|false}},
   "confidence": 0.0,
   "caveats": ["..."]
 }}
@@ -296,3 +296,4 @@ async def analyze_and_store(
         "confidence": conf,
         "content_len": len(result.get("content") or ""),
     }
+

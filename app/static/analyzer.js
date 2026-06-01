@@ -667,6 +667,11 @@ function _renderAIResult(d) {
     if (pr.score) html += '<span class="ai-pill">Tỉ số: <b>' + escapeHtml(String(pr.score)) + '</b></span>';
     html += '<span class="ai-pill">Chấp: <b>' + escapeHtml(_leanLabel(pr.handicap_lean)) + '</b></span>';
     html += '<span class="ai-pill">Tài/Xỉu: <b>' + escapeHtml(_leanLabel(pr.ou_lean)) + '</b></span>';
+    if (pr.more_goals_likely !== undefined) {
+      const moreGoalsLabel = pr.more_goals_likely ? 'Có khả năng' : 'Ít khả năng';
+      const moreGoalsColor = pr.more_goals_likely ? 'var(--green)' : 'var(--red)';
+      html += '<span class="ai-pill" style="color:' + moreGoalsColor + '">Thêm bàn: <b>' + moreGoalsLabel + '</b></span>';
+    }
     html += '</div>';
     if (conf !== null) {
       html += '<div class="ai-meta">Confidence: ' + _pct(conf) + '</div>' +
@@ -678,10 +683,46 @@ function _renderAIResult(d) {
       html += '<div class="ai-card"><h4>Tín hiệu</h4><ul class="ai-list">' +
               p.signals.map(s => '<li>' + escapeHtml(String(s)) + '</li>').join('') + '</ul></div>';
     }
+    const TAG_DESCRIPTIONS = {
+      fav_cover: 'Cửa trên thắng kèo chấp (HC)',
+      fav_no_cover: 'Cửa trên thắng kèo chấp (HC)',
+      over_hit: 'Tài thắng — tổng bàn > line O/U',
+      under_hit: 'Xỉu thắng — tổng bàn < line O/U',
+      btts: 'Cả 2 đội đều ghi bàn',
+      clean_sheet_fav: 'Cửa trên giữ sạch lưới',
+      comeback: 'Cửa trên lội ngược dòng',
+      line_drifted_up: 'Kèo chấp tăng (cửa trên nhận thêm chấp)',
+      line_drifted_down: 'Kèo chấp giảm (cửa dưới nhẹ hơn)',
+      low_scoring: 'Ít bàn — thường under 2.5',
+      high_scoring: 'Nhiều bàn — thường over 2.5',
+      draw: 'Hòa kèo / hòa tỉ số',
+      small_sample: 'Bucket có ít trận (<30) — base-rate thiếu tin cậy',
+      expected_goal_market: 'Bàn thắng đúng kỳ vọng thị trường',
+      unexpected_goals: 'Bàn thắng bất ngờ so với kỳ vọng',
+    };
     if (Array.isArray(p.tags) && p.tags.length) {
       html += '<div class="ai-card"><h4>Tags (công thức)</h4><div class="ai-pred-grid">' +
-              p.tags.map(t => '<span class="ai-pill">' + escapeHtml(String(t)) + '</span>').join('') +
+              p.tags.map(t => {
+                const desc = TAG_DESCRIPTIONS[t] || '';
+                const title = desc ? ' title="' + desc.replace(/"/g, '&quot;') + '"' : '';
+                return '<span class="ai-pill"' + title + '>' + escapeHtml(String(t)) + '</span>';
+              }).join('') +
               '</div></div>';
+      // Legend toggle
+      html += '<div style="margin-top:8px;font-size:11px;color:var(--muted);cursor:pointer" onclick="'
+              + 'var l=document.getElementById(\'tags-legend\');l.style.display=l.style.display?\'\':\'none\';'
+              + 'this.textContent=l.style.display?\'🔽 Ẩn giải thích\':\'🔽 Xem giải thích\'">'
+              + '🔽 Xem giải thích</div>';
+      html += '<div id="tags-legend" style="display:none;margin-top:6px;font-size:11px;line-height:1.7;color:var(--muted)">';
+      const shownTags = p.tags.filter(t => TAG_DESCRIPTIONS[t]);
+      if (shownTags.length) {
+        html += shownTags.map(t =>
+          '<div><b>' + escapeHtml(t) + '</b>: ' + (TAG_DESCRIPTIONS[t] || '—') + '</div>'
+        ).join('');
+      } else {
+        html += '<i>Chưa có mô tả cho các tag này.</i>';
+      }
+      html += '</div>';
     }
     if (Array.isArray(p.caveats) && p.caveats.length) {
       html += '<div class="ai-card"><h4>Lưu ý</h4><ul class="ai-list">' +
@@ -875,3 +916,4 @@ document.addEventListener('DOMContentLoaded', () => {
     _mpLoad('');
   }
 });
+

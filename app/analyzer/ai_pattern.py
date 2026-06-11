@@ -110,10 +110,24 @@ async def analyze_match(
     pred_fa: Optional[int] = None,
     overrides: Optional[dict[int, dict[str, float]]] = None,
     prestigious_only: bool = False,
+    model: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Run grounded LLM analysis for one analyzer state."""
+    """Run grounded LLM analysis for one analyzer state.
+
+    `model` is an optional per-call override. When empty/None the env default
+    (AI_MODEL_UI → AI_MODEL) is used. Sanitized at this entry point so a
+    200+ char name is rejected before we even build the prompt.
+    """
     if not AI.is_configured():
         raise RuntimeError("AI chưa được cấu hình")
+
+    # Sanitize the per-call override here too (defense in depth) — `chat()` also
+    # validates, but doing it at the module boundary gives a cleaner error path
+    # and prevents the prompt from being built for nothing.
+    try:
+        clean_model = AI._clean_model(model)
+    except ValueError as e:
+        raise RuntimeError(str(e))
 
     features = build_feature_digest(
         rows, meta=meta, pred_fh=pred_fh, pred_fa=pred_fa, overrides=overrides
@@ -160,6 +174,7 @@ Trả về JSON đúng schema:
         reasoning_effort="medium",
         max_tokens=4000,
         timeout=90,
+        model=clean_model or None,
     )
     content = AI.extract_content(data)
     parsed = _parse_json_loose(content)
@@ -229,10 +244,16 @@ async def analyze_and_store(
     match_id: str,
     *,
     prestigious_only: bool = False,
+    model: Optional[str] = None,
 ) -> dict[str, Any]:
     """Reconstruct a finished match from the DB, run grounded analysis, and
     persist the structured result to match_patterns. Used by the sweep and the
     on-demand "save pattern" endpoint.
+
+    `model` is an optional per-call override forwarded to analyze_match. When
+    None/empty the env default is used (typically AI_MODEL_UI for the on-demand
+    endpoint; the cron sweep passes its own scope via AI._model("cron") and
+    can be wired through a future change to also accept `model`).
 
     Returns a compact status dict (no full content) suitable for batch logging.
     """
@@ -259,7 +280,7 @@ async def analyze_and_store(
         "home": match.get("home"),
         "away": match.get("away"),
     }
-    result = await analyze_match(rows, meta=meta, prestigious_only=prestigious_only)
+    result = await analyze_match(rows, meta=meta, prestigious_only=prestigious_only, model=model)
 
     parsed = result.get("parsed") or {}
     pred = parsed.get("prediction") if isinstance(parsed.get("prediction"), dict) else {}
@@ -296,4 +317,3 @@ async def analyze_and_store(
         "confidence": conf,
         "content_len": len(result.get("content") or ""),
     }
-

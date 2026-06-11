@@ -55,11 +55,11 @@ async def _run() -> int:
         print(f"[sweep] import failed: {exc!r}", file=sys.stderr)
         return 1
 
-    if not AI.is_configured():
-        print("[sweep] AI not configured (cần AI_BASE_URL+AI_API_KEY+AI_MODEL) — skip", file=sys.stderr)
+    if not AI.is_configured("cron"):
+        print("[sweep] AI not configured for cron scope (cần AI_BASE_URL+AI_API_KEY+AI_MODEL_CRON/AI_MODEL) — skip", file=sys.stderr)
         return 1
 
-    model = AI._model()  # the canonical model string patterns are keyed on
+    model = AI._model("cron")  # the canonical model string patterns are keyed on; cron scope reads AI_MODEL_CRON (with AI_MODEL legacy fallback)
     batch = max(1, _int("PATTERN_SWEEP_BATCH", 20))
     delay = max(0.0, _float("PATTERN_SWEEP_DELAY_S", 2.0))
     prestigious = os.getenv("PATTERN_SWEEP_PRESTIGIOUS", "1").strip() not in ("0", "false", "")

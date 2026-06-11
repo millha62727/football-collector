@@ -20,6 +20,29 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
+# Local validation helpers
+# ---------------------------------------------------------------------------
+
+def _clean_model(raw: Any) -> Optional[str]:
+    """Sanitize a per-call model override from a request payload.
+
+    - Accepts anything (str / int / None / etc.); coerces to str and strips.
+    - Returns None when the result is empty (caller falls back to env default).
+    - Raises HTTPException(400) when the input exceeds the 200-char limit.
+      The cap mirrors `ai_client._clean_model` so 400s surface consistently
+      before we hit the LLM.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    if len(s) > 200:
+        raise HTTPException(400, "model name quá dài (max 200)")
+    return s
+
+
+# ---------------------------------------------------------------------------
 # HTML page
 # ---------------------------------------------------------------------------
 
@@ -268,6 +291,17 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
     <div class="actions">
       <button class="btn" id="btn-edit" onclick="toggleEdit()">✏ Sửa</button>
       <button class="btn run" onclick="runCompute()">▶ Run</button>
+      <input type="text" id="ai-model-input" list="ai-model-list" placeholder="model..."
+       style="width:140px;padding:5px 8px;background:#0d1117;border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:ui-monospace,monospace"
+       title="Để trống = dùng AI_MODEL_UI từ .env. Nhập tên model để override (vd: claude-opus-4.8-thinking)">
+      <datalist id="ai-model-list">
+        <option value="deepseek-v4-flash">
+        <option value="deepseek-v4-pro">
+        <option value="claude-opus-4.8-thinking">
+        <option value="claude-opus-4.7-thinking">
+        <option value="deepseek-v4-flash[1m]">
+        <option value="deepseek-v4-pro[1m]">
+      </datalist>
       <button class="btn ai" id="btn-ai-predict" onclick="aiPredict()" disabled title="Cần cấu hình AI">🤖 AI dự đoán</button>
       <button class="btn" id="btn-view-pattern" onclick="viewStoredPattern()" style="display:none" title="Xem pattern AI đã lưu cho trận này">📋 Pattern đã lưu</button>
       <button class="btn save" onclick="saveSession()">💾 Save</button>
@@ -558,6 +592,10 @@ async def api_ai_predict(
     pred_fa = int(pred_fa) if pred_fa not in (None, "") else None
     meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
     prestigious_only = bool(payload.get("prestigious_only", False))
+    # Per-call model override. Empty / None → falls back to AI_MODEL_UI
+    # (handled inside analyze_match → AI.chat). 400 raised by _clean_model on
+    # over-long input.
+    model_override = _clean_model(payload.get("model"))
 
     rows = P.read_csv_text(csv_text)
     try:
@@ -568,6 +606,7 @@ async def api_ai_predict(
             pred_fa=pred_fa,
             overrides=overrides,
             prestigious_only=prestigious_only,
+            model=model_override,
         )
     except Exception as e:  # upstream/LLM/parse failure — never 500
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
@@ -598,8 +637,14 @@ async def api_save_pattern(
     if not match_id:
         raise HTTPException(400, "match_id required")
     prestigious_only = bool(payload.get("prestigious_only", False))
+    # Per-call model override (same semantics as api_ai_predict).
+    model_override = _clean_model(payload.get("model"))
     try:
-        out = await AIP.analyze_and_store(match_id, prestigious_only=prestigious_only)
+        out = await AIP.analyze_and_store(
+            match_id,
+            prestigious_only=prestigious_only,
+            model=model_override,
+        )
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
     return JSONResponse({"ok": True, **out})

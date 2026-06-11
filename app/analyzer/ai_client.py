@@ -6,10 +6,13 @@ we speak the raw `/chat/completions` HTTP contract over aiohttp (already a dep),
 so any OpenAI-compatible endpoint works (ai-box, OpenAI, vLLM, LM Studio, ...).
 
 Config (.env):
-  AI_BASE_URL   base URL up to and including the API version, e.g.
-                https://api.ai-box.vn/v1   (trailing slash optional)
-  AI_API_KEY    bearer token
-  AI_MODEL      model name, e.g. deepseek-v4-pro
+  AI_BASE_URL     base URL up to and including the API version, e.g.
+                  https://api.ai-box.vn/v1   (trailing slash optional)
+  AI_API_KEY      bearer token
+  AI_MODEL_UI     model name for UI-driven calls (analyzer page button)
+  AI_MODEL_CRON   model name for background jobs (pattern sweep, etc.)
+  AI_MODEL        LEGACY fallback — used for both UI and cron if the scoped
+                  vars are not set. Lets existing deployments keep working.
 
 Env is read lazily (not at import) so both entry points — uvicorn web server
 and the collector process — pick up values without an early dotenv hook,
@@ -28,6 +31,16 @@ import aiohttp
 # tighter timeout of its own.
 _TIMEOUT = 30
 
+# Valid scope values for `_model(scope=)` and `is_configured(scope=)`. The UI
+# scope drives the analyzer page button; the cron scope drives background jobs
+# (pattern sweep). Adding more scopes later is a matter of extending the
+# resolver, not touching call sites.
+_VALID_SCOPES = ("ui", "cron")
+
+# Cap on per-call model override length. 200 chars is well past any real model
+# name and short enough to refuse obvious junk without being annoying.
+_MAX_MODEL_LEN = 200
+
 
 # ---------------------------------------------------------------------------
 # Config resolvers (lazy, env-only)
@@ -41,8 +54,17 @@ def _api_key() -> str:
     return (os.getenv("AI_API_KEY", "") or "").strip()
 
 
-def _model() -> str:
-    return (os.getenv("AI_MODEL", "") or "").strip()
+def _model(scope: str = "ui") -> str:
+    """Resolve the configured model for a given scope.
+
+    Order: scoped var (e.g. AI_MODEL_UI) → legacy `AI_MODEL` → empty. Scope
+    must be in `_VALID_SCOPES`; any other value raises ValueError so a typo
+    doesn't silently fall back to UI.
+    """
+    if scope not in _VALID_SCOPES:
+        raise ValueError(f"invalid scope {scope!r}; expected one of {_VALID_SCOPES}")
+    scoped_key = f"AI_MODEL_{scope.upper()}"
+    return (os.getenv(scoped_key, "") or os.getenv("AI_MODEL", "") or "").strip()
 
 
 # Valid reasoning_effort variants accepted by ai-box (probed against the live
@@ -76,9 +98,9 @@ def _extra_body() -> dict[str, Any]:
         return {}
 
 
-def is_configured() -> bool:
-    """True only when base URL, API key, and model are all set."""
-    return bool(_base_url() and _api_key() and _model())
+def is_configured(scope: str = "ui") -> bool:
+    """True only when base URL, API key, and the scoped model are all set."""
+    return bool(_base_url() and _api_key() and _model(scope))
 
 
 def _mask(key: str) -> str:
@@ -93,24 +115,38 @@ def _mask(key: str) -> str:
 def diagnose() -> dict[str, Any]:
     """Surface resolved config so the UI can show a precise status/reason.
 
-    The API key is masked; the base URL and model are safe to show.
+    Reports both scoped models (ui + cron) plus the legacy `model` field for
+    callers that haven't migrated. The API key is masked; the base URL and
+    model names are safe to show.
     """
     key = _api_key()
+    model_ui = _model("ui")
+    model_cron = _model("cron")
     return {
-        "configured": is_configured(),
+        # Legacy keys — preserved for callers (UI badge, sweep) that still
+        # read a single `model` field. Mapped to the UI scope since the
+        # analyzer page is the dominant caller.
+        "configured": is_configured("ui"),
         "has_base_url": bool(_base_url()),
         "has_api_key": bool(key),
-        "has_model": bool(_model()),
+        "has_model": bool(model_ui),
         "base_url": _base_url(),
-        "model": _model(),
+        "model": model_ui,
         "api_key_masked": _mask(key),
         "reasoning_effort": _reasoning_effort(),
+        # New scoped keys — the UI badge can show the actual model in use,
+        # and the cron sweep can verify its own model independently.
+        "model_ui": model_ui,
+        "model_cron": model_cron,
+        "configured_ui": is_configured("ui"),
+        "configured_cron": is_configured("cron"),
     }
 
 
 # ---------------------------------------------------------------------------
 # Core call
 # ---------------------------------------------------------------------------
+
 
 async def chat(
     messages: list[dict[str, str]],
@@ -119,6 +155,7 @@ async def chat(
     max_tokens: int = 512,
     timeout: int = _TIMEOUT,
     reasoning_effort: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> dict[str, Any]:
     """Low-level chat completion. Raises RuntimeError on any failure.
 
@@ -129,18 +166,28 @@ async def chat(
     call only — pass an explicit level (low/medium/...) for tasks that don't
     need deep reasoning, or "" to force-omit the field. Invalid values fall
     back to the env default.
+
+    `model` overrides the env-resolved model for this call only — pass a non-
+    empty string to swap models per call (e.g. UI input box). Empty / None
+    falls back to `_model("ui")` since chat() is invoked from the analyzer
+    context, which is the UI scope. The override is sanitized (stripped, max
+    _MAX_MODEL_LEN chars) so a typo or hostile payload can't 400 the request.
     """
-    if not is_configured():
+    if not is_configured("ui"):
         raise RuntimeError(
-            "AI chưa được cấu hình (cần AI_BASE_URL + AI_API_KEY + AI_MODEL trong .env)"
+            "AI chưa được cấu hình (cần AI_BASE_URL + AI_API_KEY + AI_MODEL_UI/AI_MODEL trong .env)"
         )
     url = _base_url() + "/chat/completions"
     headers = {
         "Authorization": f"Bearer {_api_key()}",
         "Content-Type": "application/json",
     }
+    # Resolve per-call model override. Empty/None → use env default (UI scope).
+    # _clean_model returns the sanitized string or empty when nothing valid
+    # was passed; ValueError is raised for over-long input.
+    override = _clean_model(model)
     body = {
-        "model": _model(),
+        "model": override or _model("ui"),
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
@@ -168,6 +215,23 @@ async def chat(
         raise RuntimeError(f"Lỗi kết nối: {e}")
     except (TimeoutError, __import__("asyncio").TimeoutError):
         raise RuntimeError(f"Timeout sau {timeout}s")
+
+
+def _clean_model(raw: Optional[str]) -> str:
+    """Sanitize a per-call model override.
+
+    Returns the trimmed non-empty string when it fits under _MAX_MODEL_LEN.
+    Returns '' for None / empty so callers fall back to the env default.
+    Raises ValueError for over-long input — the caller surfaces that as 400.
+    """
+    if raw is None:
+        return ""
+    s = str(raw).strip()
+    if not s:
+        return ""
+    if len(s) > _MAX_MODEL_LEN:
+        raise ValueError(f"model name quá dài (max {_MAX_MODEL_LEN} chars)")
+    return s
 
 
 def _parse_completion(text: str) -> dict[str, Any]:
@@ -254,6 +318,7 @@ def extract_reasoning(data: dict[str, Any]) -> str:
 # Connectivity check — a real round-trip
 # ---------------------------------------------------------------------------
 
+
 async def check() -> dict[str, Any]:
     """Probe the endpoint with a minimal real completion.
 
@@ -269,7 +334,7 @@ async def check() -> dict[str, Any]:
         if not diag["has_api_key"]:
             missing.append("AI_API_KEY")
         if not diag["has_model"]:
-            missing.append("AI_MODEL")
+            missing.append("AI_MODEL_UI")
         return {
             "ok": False,
             "configured": False,
@@ -290,7 +355,7 @@ async def check() -> dict[str, Any]:
             "ok": True,
             "configured": True,
             "latency_ms": elapsed,
-            "model": _model(),
+            "model": _model("ui"),
             "base_url": _base_url(),
             "sample": extract_content(data)[:50],
         }
@@ -300,7 +365,7 @@ async def check() -> dict[str, Any]:
             "ok": False,
             "configured": True,
             "latency_ms": elapsed,
-            "model": _model(),
+            "model": _model("ui"),
             "base_url": _base_url(),
             "error": str(e)[:300],
         }

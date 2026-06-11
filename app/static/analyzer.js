@@ -899,16 +899,69 @@ document.addEventListener('DOMContentLoaded', () => {
   loadAIStatus();
   loadAIModels();
 
+  // Model dropdown keyboard navigation
+  const modelInput = $("ai-model-input");
+  if (modelInput) {
+    modelInput.addEventListener("focus", () => _showModelDD());
+    modelInput.addEventListener("blur", () => setTimeout(_hideModelDD, 150));
+    modelInput.addEventListener("keydown", e => {
+      if (!_modelDDVisible) return;
+      const items = [...($("ai-model-dropdown")?.querySelectorAll(".model-dd-item") || [])];
+      if (!items.length) return;
+      const cur = items.findIndex(el => el.classList.contains("active"));
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        items.forEach(el => el.classList.remove("active"));
+        const next = cur < items.length - 1 ? cur + 1 : 0;
+        items[next].classList.add("active");
+        items[next].scrollIntoView({ block: "nearest" });
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        items.forEach(el => el.classList.remove("active"));
+        const prev = cur > 0 ? cur - 1 : items.length - 1;
+        items[prev].classList.add("active");
+        items[prev].scrollIntoView({ block: "nearest" });
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const active = items.find(el => el.classList.contains("active"));
+        if (active) { modelInput.value = active.dataset.value; _hideModelDD(); }
+      } else if (e.key === "Escape") {
+        _hideModelDD();
+      }
+    });
+  }
+
+let _modelDDVisible = false;
+
 async function loadAIModels() {
   try {
     const r = await fetch("/api/ai/models");
     if (!r.ok) return;
     const models = await r.json();
-    const dl = $("ai-model-list");
-    if (!dl || !Array.isArray(models) || !models.length) return;
-    dl.innerHTML = models.map(m => `<option value="${escapeHtml(m)}">`).join("");
+    const dd = $("ai-model-dropdown");
+    if (!dd || !Array.isArray(models) || !models.length) return;
+    dd.innerHTML = models.map(m => `<div class="model-dd-item" data-value="${escapeHtml(m)}">${escapeHtml(m)}</div>`).join("");
+    dd.querySelectorAll(".model-dd-item").forEach(el => {
+      el.addEventListener("mousedown", e => {
+        e.preventDefault();
+        const inp = $("ai-model-input");
+        if (inp) inp.value = el.dataset.value;
+        _hideModelDD();
+      });
+    });
   } catch {}
 }
+
+function _showModelDD() {
+  const dd = $("ai-model-dropdown");
+  if (dd && dd.children.length) { dd.style.display = "block"; _modelDDVisible = true; }
+}
+
+function _hideModelDD() {
+  const dd = $("ai-model-dropdown");
+  if (dd) { dd.style.display = "none"; _modelDDVisible = false; }
+}
+
 
   // Wire match picker search
   const mpSearch = $('mp-search');

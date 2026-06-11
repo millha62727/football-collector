@@ -195,6 +195,10 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
 .ai-badge .ai-check{padding:2px 9px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;font-size:11px;font-family:inherit;transition:all .15s}
 .ai-badge .ai-check:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
 .ai-badge .ai-check:disabled{opacity:.5;cursor:default}
+.model-dd{position:absolute;top:100%;left:0;z-index:10001;background:var(--card);border:1px solid var(--border);border-radius:var(--r);max-height:200px;overflow-y:auto;width:200px;box-shadow:0 4px 12px rgba(0,0,0,0.4);margin-top:2px}
+.model-dd-item{padding:5px 10px;font-size:11px;cursor:pointer;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.model-dd-item:hover,.model-dd-item.active{background:var(--primary);color:#fff}
+.model-dd-item.dim{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -291,10 +295,12 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
     <div class="actions">
       <button class="btn" id="btn-edit" onclick="toggleEdit()">✏ Sửa</button>
       <button class="btn run" onclick="runCompute()">▶ Run</button>
-      <input type="text" id="ai-model-input" list="ai-model-list" placeholder="model..."
+      <span style="position:relative">
+      <input type="text" id="ai-model-input" placeholder="model..."
        style="width:140px;padding:5px 8px;background:#0d1117;border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:ui-monospace,monospace"
-       title="Để trống = dùng AI_MODEL_UI từ .env. Nhập tên model để override (vd: claude-opus-4.8-thinking)">
-      <datalist id="ai-model-list"></datalist>
+       title="De trong = dung AI_MODEL_UI tu .env. Nhap ten model de override (vd: claude-opus-4.8-thinking)">
+      <div id="ai-model-dropdown" class="model-dd" style="display:none"></div>
+      </span>
       <button class="btn ai" id="btn-ai-predict" onclick="aiPredict()" disabled title="Cần cấu hình AI">🤖 AI dự đoán</button>
       <button class="btn" id="btn-view-pattern" onclick="viewStoredPattern()" style="display:none" title="Xem pattern AI đã lưu cho trận này">📋 Pattern đã lưu</button>
       <button class="btn save" onclick="saveSession()">💾 Save</button>

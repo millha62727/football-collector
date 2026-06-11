@@ -294,14 +294,7 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
       <input type="text" id="ai-model-input" list="ai-model-list" placeholder="model..."
        style="width:140px;padding:5px 8px;background:#0d1117;border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;font-family:ui-monospace,monospace"
        title="Để trống = dùng AI_MODEL_UI từ .env. Nhập tên model để override (vd: claude-opus-4.8-thinking)">
-      <datalist id="ai-model-list">
-        <option value="deepseek-v4-flash">
-        <option value="deepseek-v4-pro">
-        <option value="claude-opus-4.8-thinking">
-        <option value="claude-opus-4.7-thinking">
-        <option value="deepseek-v4-flash[1m]">
-        <option value="deepseek-v4-pro[1m]">
-      </datalist>
+      <datalist id="ai-model-list"></datalist>
       <button class="btn ai" id="btn-ai-predict" onclick="aiPredict()" disabled title="Cần cấu hình AI">🤖 AI dự đoán</button>
       <button class="btn" id="btn-view-pattern" onclick="viewStoredPattern()" style="display:none" title="Xem pattern AI đã lưu cho trận này">📋 Pattern đã lưu</button>
       <button class="btn save" onclick="saveSession()">💾 Save</button>
@@ -562,6 +555,16 @@ async def api_ai_check(user: str = Depends(require_auth)):
     result = await AI.check()
     status = 200 if result.get("ok") else (400 if not result.get("configured") else 502)
     return JSONResponse(result, status_code=status)
+
+@router.get("/api/ai/models")
+async def api_ai_models(user: str = Depends(require_auth)):
+    """Return available model IDs from the configured AI endpoint.
+
+    Returns empty list when AI is not configured or upstream /models fails.
+    Frontend falls back to free-text input in that case.
+    """
+    models = await AI.list_models()
+    return JSONResponse(models)
 
 
 @router.post("/api/analyzer/ai-predict")

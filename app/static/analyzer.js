@@ -781,6 +781,7 @@ async function aiPredict() {
         pred_fh: pfh,
         pred_fa: pfa,
         meta: S.meta,
+        model: ($("ai-model-input")?.value || "").trim(),
       }),
     });
     const d = await r.json();
@@ -896,6 +897,18 @@ document.addEventListener('DOMContentLoaded', () => {
   wireDrop();
   wireNote();
   loadAIStatus();
+  loadAIModels();
+
+async function loadAIModels() {
+  try {
+    const r = await fetch("/api/ai/models");
+    if (!r.ok) return;
+    const models = await r.json();
+    const dl = $("ai-model-list");
+    if (!dl || !Array.isArray(models) || !models.length) return;
+    dl.innerHTML = models.map(m => `<option value="${escapeHtml(m)}">`).join("");
+  } catch {}
+}
 
   // Wire match picker search
   const mpSearch = $('mp-search');

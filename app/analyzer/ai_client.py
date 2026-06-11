@@ -369,3 +369,48 @@ async def check() -> dict[str, Any]:
             "base_url": _base_url(),
             "error": str(e)[:300],
         }
+
+# ---------------------------------------------------------------------------
+# Model listing — fetch from API
+# ---------------------------------------------------------------------------
+
+# Simple TTL cache: (timestamp, model_ids)
+_models_cache: tuple[float, list[str]] | None = None
+_MODELS_CACHE_TTL = 300  # 5 minutes
+
+
+async def list_models() -> list[str]:
+    """Fetch available models from the API's /v1/models endpoint.
+
+    Returns a list of model IDs (strings). Returns [] if the API is not
+    configured, the endpoint returns non-200, or parsing fails.
+    Result is cached for _MODELS_CACHE_TTL seconds to avoid hammering the
+    API on every page load.
+    """
+    global _models_cache
+    now = time.time()
+    if _models_cache and (now - _models_cache[0]) < _MODELS_CACHE_TTL:
+        return _models_cache[1]
+
+    if not is_configured():
+        return []
+
+    url = _base_url() + "/models"
+    headers = {
+        "Authorization": f"Bearer {_api_key()}",
+        "Content-Type": "application/json",
+    }
+    try:
+        client_timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+                # OpenAI-compatible: {"object": "list", "data": [{"id": "...", ...}, ...]}
+                model_ids = [m["id"] for m in data.get("data", []) if isinstance(m, dict) and "id" in m]
+                _models_cache = (now, model_ids)
+                return model_ids
+    except Exception:
+        return []
+

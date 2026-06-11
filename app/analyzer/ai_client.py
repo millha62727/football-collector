@@ -409,6 +409,11 @@ async def list_models() -> list[str]:
                 data = await resp.json()
                 # OpenAI-compatible: {"object": "list", "data": [{"id": "...", ...}, ...]}
                 model_ids = [m["id"] for m in data.get("data", []) if isinstance(m, dict) and "id" in m]
+                # Filter out models we don't want surfaced in the UI (Gemini + 1M-context variants)
+                model_ids = [
+                    mid for mid in model_ids
+                    if "gemini" not in mid.lower() and "[1m]" not in mid
+                ]
                 _models_cache = (now, model_ids)
                 return model_ids
     except Exception:

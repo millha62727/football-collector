@@ -1636,23 +1636,33 @@ def _ou_score(line: float, total: float) -> float:
     return s / len(parts)
 
 
-def compute_pattern_stats(
-    open_hc: Optional[str] = None,
-    open_ou: Optional[str] = None,
-    prestigious_only: bool = False,
-    limit_matches: int = 5000,
-) -> dict[str, Any]:
-    """Empirical base-rates over finished matches, grounded on opening odds.
+# ---------------------------------------------------------------------------
+# Raw-rows cache for compute_pattern_stats
+# ---------------------------------------------------------------------------
+# The SQL query (Step A) is the expensive part — ~3.5s over 13K FT matches
+# with prestige filters. The aggregation (Step B+C) is cheap (~50ms).
+# Caching the raw rows (input to aggregation) keyed by (prestigious_only,)
+# gives bit-identical output to the no-cache path, with at most ~10 matches
+# of staleness in the 120s TTL window (collector inserts ~5/min).
+# Result-level caching would silently corrupt rate calculations when new
+# matches are inserted; row-level caching only reuses the SELECT result,
+# the aggregate step still runs every call.
+_FT_ROWS_CACHE_TTL = 120.0  # seconds
+_ft_rows_cache: dict[tuple[bool, int], tuple[float, list[dict[str, Any]]]] = {}
 
-    For every FT match we take its FIRST odds snapshot (opening line) and final
-    score, then compute: favorite-cover rate, over rate, avg goals, BTTS, 1X2.
-    `open_hc`/`open_ou` (canonical strings, e.g. '-0.75' / '2.5') restrict to a
-    bucket; omit for the overall picture plus a top-bucket breakdown.
 
-    Returns a dict consumed by the AI layer and the analyzer UI.
+def _get_ft_rows(prestigious_only: bool, limit_matches: int) -> list[dict[str, Any]]:
+    """Return the FT rows for the aggregate step, with a short TTL cache.
+
+    The query result is the only thing cached. Aggregations (bucket, overall,
+    by_open_hc) re-run every call against the freshest cached rows so output
+    is identical to a cold call up to the staleness window.
     """
-    open_hc_n = _norm_match_str(open_hc)
-    open_ou_n = _norm_match_str(open_ou)
+    key = (prestigious_only, limit_matches)
+    now = time.time()
+    cached = _ft_rows_cache.get(key)
+    if cached and (now - cached[0]) < _FT_ROWS_CACHE_TTL:
+        return cached[1]
 
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -1683,6 +1693,37 @@ def compute_pattern_stats(
 
     if prestigious_only:
         rows = [r for r in rows if is_prestigious(r.get("competition"))]
+
+    _ft_rows_cache[key] = (now, rows)
+    return rows
+
+
+def invalidate_ft_rows_cache() -> None:
+    """Drop the cached FT rows. Call this from the collector after a match
+    is inserted/updated if you want to skip the TTL window on the next read.
+    Safe to call when no cache entry exists."""
+    _ft_rows_cache.clear()
+
+
+def compute_pattern_stats(
+    open_hc: Optional[str] = None,
+    open_ou: Optional[str] = None,
+    prestigious_only: bool = False,
+    limit_matches: int = 5000,
+) -> dict[str, Any]:
+    """Empirical base-rates over finished matches, grounded on opening odds.
+
+    For every FT match we take its FIRST odds snapshot (opening line) and final
+    score, then compute: favorite-cover rate, over rate, avg goals, BTTS, 1X2.
+    `open_hc`/`open_ou` (canonical strings, e.g. '-0.75' / '2.5') restrict to a
+    bucket; omit for the overall picture plus a top-bucket breakdown.
+
+    Returns a dict consumed by the AI layer and the analyzer UI.
+    """
+    open_hc_n = _norm_match_str(open_hc)
+    open_ou_n = _norm_match_str(open_ou)
+
+    rows = _get_ft_rows(prestigious_only, limit_matches)
 
     n_total = len(rows)
 

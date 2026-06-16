@@ -1,0 +1,106 @@
+name: Test prediction accuracy (cutoff 75')
+
+# Workflow manual trigger: đánh giá độ chính xác dự đoán bằng cách cắt
+# match_odds_history tại phút 75' rồi chạy analyze (deterministic, không
+# cần LLM) hoặc LLM path (--llm flag). Tương tự script test_cutoff_75min.py
+# nhưng chạy trên VPS qua SSH action (cùng pattern với deploy.yml).
+#
+# Usage:
+#   1. Vào GitHub Actions → "Test prediction accuracy"
+#   2. Click "Run workflow" → chọn options:
+#      - count: số trận random (default 10)
+#      - seed: random seed để reproduce (default 42)
+#      - use_llm: True để test full LLM path (cần AI_BASE_URL trên VPS)
+#   3. Đợi ~30s, xem output ở step "Run test on VPS"
+#
+# Secrets cần (giống deploy.yml):
+#   - VPS_HOST, VPS_USER, VPS_PASSWORD, VPS_PORT
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: 'Số trận random (default 10)'
+        required: false
+        default: '10'
+        type: string
+      seed:
+        description: 'Random seed (default 42)'
+        required: false
+        default: '42'
+        type: string
+      use_llm:
+        description: 'Dùng LLM (chậm ~30s/trận, cần AI_BASE_URL). Default OFF (deterministic)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  test-accuracy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Run test on VPS via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            set -e
+            cd football-collector
+
+            # Đảm bảo code mới nhất (script + dependencies)
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Pull image mới nếu cần (deterministic mode không cần rebuild,
+            # nhưng --llm mode cần code mới → reuse dashboard image)
+            # Không restart container vì script chạy 1 lần rồi thoát.
+
+            # Build args
+            ARGS="--count ${{ inputs.count }} --seed ${{ inputs.seed }}"
+            if [ "${{ inputs.use_llm }}" = "true" ]; then
+              ARGS="$ARGS --llm"
+            fi
+
+            # Copy script ra container tạm rồi exec — script ở /app/scripts/
+            # trong image cũ có thể chưa có (chỉ có sau deploy). Dùng cách
+            # pipe: cat local → container stdin → python3 - từ mounted volume.
+            #
+            # Đơn giản nhất: copy file vào container qua docker cp, rồi exec.
+            echo "=========================================="
+            echo "Test prediction accuracy — cutoff 75'"
+            echo "Args: $ARGS"
+            echo "=========================================="
+
+            # Pull script từ host vào container (file đã có trong /app sau
+            # git pull trên host vì deploy mount /root/football-collector
+            # nhưng container lại mount image, không mount host).
+            # → dùng docker cp để copy file vào /tmp/ rồi exec.
+
+            docker cp scripts/test_cutoff_75min.py football_dashboard:/tmp/test_cutoff_75min.py
+
+            echo ""
+            echo "=== BEGIN test output ==="
+            echo ""
+            docker exec football_dashboard python3 /tmp/test_cutoff_75min.py $ARGS 2>&1
+            echo ""
+            echo "=== END test output ==="
+
+      - name: Cleanup
+        if: always()
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            # Dọn file tạm trong container
+            docker exec football_dashboard rm -f /tmp/test_cutoff_75min.py 2>/dev/null || true
+            echo "Cleanup done"

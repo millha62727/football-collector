@@ -1,7 +1,19 @@
 # Plan: Cải tạo "công thức" (Formula Improvement) — 2026-06-16
 
 > Từ discussion 16/06 trong session `20260616_132431_2a0d9f24`.
-> Trạng thái: **APPROVED — đang execute** (sau khi rule mới: goal/plan → chạy hết, không confirm).
+> Trạng thái: **Phase 0+1+2 DONE** (commit 17e8842, deployed, backfill applied, tests green). Phase 3+4 chưa làm.
+
+## 🎉 Final report (17/06 00:38 +07)
+
+| Step | Result |
+|---|---|
+| Commit `17e8842` | pushed + deployed via GH Actions (~1 phút) |
+| Migration 004 | `open_hc_side TEXT` added, idempotent |
+| Backfill apply | **649/654 rows updated** (5 NULL = raw_features thiếu side) |
+| Distribution | home 372 / away 174 / level 103 / NULL 5 |
+| Test on container | `test_database_tier.py` ALL PASSED |
+| Test on container | `test_ai_helpers.py` ALL PASSED |
+| GitNexus re-index | 619 nodes, 2,354 edges |
 
 ## Mục tiêu
 

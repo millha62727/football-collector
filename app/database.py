@@ -5,7 +5,7 @@ import os
 import re
 import time
 from contextlib import contextmanager
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 from urllib.parse import urlparse
 
 import psycopg2
@@ -2104,16 +2104,146 @@ def get_match_pattern(match_id: str, model: Optional[str] = None) -> Optional[di
     return dict(row) if row else None
 
 
+def wilson_ci95(p: float, n: int) -> tuple[float, float]:
+    """Wilson score 95% confidence interval cho một proportion.
+
+    Returns (center, half_width) — caller dùng center ± half_width cho CI.
+    n=0 → trả (0.0, 0.0) để caller biết "không có dữ liệu".
+    p ngoài [0, 1] bị clamp trước khi tính.
+
+    Reference: Edwin Wilson, "Probable Inference, the Law of Succession, and
+    Statistical Inference", JASA, 1927. Công thức ổn định hơn normal approx
+    cho n nhỏ và p gần 0 hoặc 1.
+    """
+    if n <= 0:
+        return (0.0, 0.0)
+    p = max(0.0, min(1.0, p))
+    z = 1.96
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    center = (p + z2 / (2.0 * n)) / denom
+    half = (z / denom) * math.sqrt(p * (1.0 - p) / n + z2 / (4.0 * n * n))
+    return (center, half)
+
+
+# Ngưỡng sample-size cho tag_outcome_validate (Hướng 1).
+# Wilson CI95 half-width tại n=15, p=0.5 là ~0.226 — noise nhưng không vô
+# nghĩa. Dưới ngưỡng này UI sẽ ẩn metric (insufficient_data=True).
+MIN_VALIDATE_N = 15
+
+
+def _parse_open_line_to_float(line: Optional[str]) -> Optional[float]:
+    """Parse TEXT canonical open_hc/open_ou sang float, return None nếu rỗng/sai."""
+    if line is None or line == "":
+        return None
+    try:
+        return float(line)
+    except (TypeError, ValueError):
+        return None
+
+
+def tag_outcome_validate(
+    tag: str,
+    rows: Sequence[dict[str, Any]],
+    min_n: int = MIN_VALIDATE_N,
+) -> dict[str, Any]:
+    """Tính outcome thực tế cho 1 tag từ danh sách pattern rows đã JOIN matches.
+
+    Input `rows` phải có các field: open_hc (TEXT, magnitude), open_hc_side
+    (TEXT: 'home'|'away'|'level'), home_score, away_score, parse_ok=TRUE.
+    Mỗi row đại diện 1 pattern; tag_outcome_validate lọc theo `tag` qua tags[].
+
+    Returns dict:
+      - n : số pattern có tag này VÀ có đủ data (open_hc + side)
+      - fav_cover_rate_actual : tỉ lệ cover thực tế (None nếu n < min_n)
+      - ci95_low / ci95_high : khoảng Wilson 95%
+      - ci_half_width : half-width của CI (debug + UI "X% (±Y%)")
+      - avg_margin : trung bình margin từ phía favorite
+      - avg_total_goals : trung bình tổng bàn
+      - insufficient_data : True nếu n < min_n hoặc không có row hợp lệ
+    """
+    n_total = 0
+    cover_sum = 0.0
+    cover_n = 0
+    margin_sum = 0.0
+    total_sum = 0
+    valid_n = 0
+
+    for r in rows:
+        # Lọc theo tag
+        if tag not in (r.get("tags") or []):
+            continue
+        n_total += 1
+
+        # Cần đủ data: open_hc + side + scores
+        line = _parse_open_line_to_float(r.get("open_hc"))
+        side = r.get("open_hc_side")
+        hs = r.get("home_score")
+        aw = r.get("away_score")
+        if line is None or side is None or hs is None or aw is None:
+            continue
+        if side not in ("home", "away"):
+            # 'level' (kèo đồng banh) — không tính cover được, bỏ qua
+            continue
+        valid_n += 1
+
+        margin = (hs - aw) if side == "home" else (aw - hs)
+        cover_sum += _cover_score(line, margin)
+        cover_n += 1
+        margin_sum += margin
+        total_sum += hs + aw
+
+    insufficient = valid_n < min_n
+
+    if cover_n == 0:
+        return {
+            "tag": tag,
+            "n": n_total,
+            "valid_n": 0,
+            "fav_cover_rate_actual": None,
+            "ci95_low": None,
+            "ci95_high": None,
+            "ci_half_width": None,
+            "avg_margin": None,
+            "avg_total_goals": None,
+            "insufficient_data": True,
+            "reason": "no_cover_data" if n_total > 0 else "no_rows",
+        }
+
+    rate = cover_sum / cover_n
+    center, half = wilson_ci95(rate, cover_n)
+    return {
+        "tag": tag,
+        "n": n_total,
+        "valid_n": valid_n,
+        "fav_cover_rate_actual": round(rate, 4) if not insufficient else None,
+        "ci95_low": round(max(0.0, center - half), 4) if not insufficient else None,
+        "ci95_high": round(min(1.0, center + half), 4) if not insufficient else None,
+        "ci_half_width": round(half, 4) if not insufficient else None,
+        "avg_margin": round(margin_sum / cover_n, 3),
+        "avg_total_goals": round(total_sum / cover_n, 3),
+        "insufficient_data": insufficient,
+    }
+
+
 def aggregate_patterns(prestigious_only: bool = True, limit: int = 2000) -> dict[str, Any]:
     """Roll stored patterns up into a tag/signal frequency view — the raw
     material for distilling "công thức". Joins to matches so we can filter by
     prestige and report against actual outcomes.
+
+    Hướng 1 (2026-06): mỗi tag trong `top_tags` giờ được enrich với outcome
+    thật (fav_cover_rate_actual + Wilson CI95 + insufficient_data guard) qua
+    tag_outcome_validate(). Shape: thay vì (tag, count), mỗi entry giờ là
+    dict {tag, n, valid_n, fav_cover_rate_actual, ci95_low, ci95_high, ...}.
+
+    API backward compat: `n_patterns`, `avg_confidence`, `prestigious_only`
+    giữ nguyên shape. UI cần đọc dict thay vì tuple.
     """
     with _connect() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(
             """
-            SELECT p.tags, p.confidence, p.open_hc, p.open_ou,
+            SELECT p.tags, p.confidence, p.open_hc, p.open_hc_side, p.open_ou,
                    p.prediction, m.competition, m.home_score, m.away_score
               FROM match_patterns p
               JOIN matches m ON m.id = p.match_id
@@ -2137,10 +2267,62 @@ def aggregate_patterns(prestigious_only: bool = True, limit: int = 2000) -> dict
         if r.get("confidence") is not None:
             conf_sum += r["confidence"]
             conf_n += 1
+
+    # Enrich top-30 tags với outcome thật (Hướng 1).
+    top_tags_raw = tag_counts.most_common(30)
+    top_tags: list[dict[str, Any]] = []
+    for tag, cnt in top_tags_raw:
+        outcome = tag_outcome_validate(tag, rows)
+        top_tags.append({
+            "tag": tag,
+            "n": cnt,                                # tần suất tag xuất hiện
+            "valid_n": outcome["valid_n"],           # có đủ data để tính cover
+            "fav_cover_rate_actual": outcome["fav_cover_rate_actual"],
+            "ci95_low": outcome["ci95_low"],
+            "ci95_high": outcome["ci95_high"],
+            "ci_half_width": outcome["ci_half_width"],
+            "avg_margin": outcome["avg_margin"],
+            "avg_total_goals": outcome["avg_total_goals"],
+            "insufficient_data": outcome["insufficient_data"],
+        })
+
+    # Hướng 2 (2026-06): weighted_avg_confidence cho tầng aggregate.
+    # Weight = sqrt(valid_n / 30) per tag — diminishing returns theo sqrt,
+    # đạt 1.0 tại n=30, cap 1.0. Tag có n<15 (insufficient) vẫn dùng n thô
+    # để weight, chỉ rate bị ẩn. Đây là display-only — không sửa confidence
+    # per-pattern ở `analyze_and_store`.
+    #
+    # Pre-index: tag → list of (confidence) để tránh O(n_tags × n_rows)
+    # khi 30 tags × 650 rows = 19,500 list lookups.
+    from collections import defaultdict
+    tag_conf_sums: dict[str, float] = defaultdict(float)
+    tag_conf_ns: dict[str, int] = defaultdict(int)
+    for r in rows:
+        c = r.get("confidence")
+        if c is None:
+            continue
+        for t in (r.get("tags") or []):
+            tag_conf_sums[t] += c
+            tag_conf_ns[t] += 1
+    weighted_sum = 0.0
+    weight_total = 0.0
+    for t in top_tags:
+        v = t["valid_n"]
+        if v <= 0:
+            continue
+        w = math.sqrt(min(v, 30) / 30.0)
+        n_conf = tag_conf_ns.get(t["tag"], 0)
+        if n_conf > 0:
+            tag_avg = tag_conf_sums[t["tag"]] / n_conf
+            weighted_sum += tag_avg * w
+            weight_total += w
+    weighted_avg_confidence = round(weighted_sum / weight_total, 3) if weight_total else None
+
     return {
         "n_patterns": len(rows),
         "avg_confidence": round(conf_sum / conf_n, 3) if conf_n else None,
-        "top_tags": tag_counts.most_common(30),
+        "weighted_avg_confidence": weighted_avg_confidence,
+        "top_tags": top_tags,
         "prestigious_only": prestigious_only,
     }
 

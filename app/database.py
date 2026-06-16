@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import os
 import re
 import time
@@ -1637,6 +1638,81 @@ def _ou_score(line: float, total: float) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Tier bucketing (Hướng 3) — pure functions, no DB
+# ---------------------------------------------------------------------------
+# Goal: bucket opening HC/OU theo dải thay vì exact-line để tăng sample size
+# cho tag_outcome_validate(). Tier mapping frozen trong
+# `.hermes/plans/improve-formula-2026-06-16.md` (Phase 1).
+#
+# `line` ở đây là handicap từ phía favorite (negative = favorite gives ball).
+#   HC mapping:
+#     "kèo_nhỏ" : |line| <= 0.25  (level ball, đội cửa trên chỉ chấp nhẹ)
+#     "kèo_vừa" : 0.5 <= |line| <= 0.75
+#     "kèo_lớn" : |line| >= 1.0
+#   OU mapping (line là total goals, luôn > 0):
+#     "thấp" : line <= 2.5
+#     "vừa"  : 2.75 <= line <= 3.0
+#     "cao"  : line >= 3.25
+# ---------------------------------------------------------------------------
+
+
+def tier_hc(line: float | None) -> str | None:
+    """Bucket opening handicap theo dải. Pure function, không phụ thuộc DB.
+
+    Returns None cho input invalid / None (caller xử lý hide metric).
+
+    Mapping (theo `.hermes/plans/improve-formula-2026-06-16.md`):
+      kèo_nhỏ  : |line| <= 0.5
+      kèo_vừa  : 0.5 < |line| <= 1.0
+      kèo_lớn  : |line| > 1.0
+
+    Lưu ý: range hơi overlap ở 0.5 để map các quarter ball (0.25, 0.75) vào
+    bucket gần nhất thay vì return None (data noise từ upstream).
+    """
+    if line is None:
+        return None
+    try:
+        v = float(line)
+    except (TypeError, ValueError):
+        return None
+    # NaN guard: NaN so sánh luôn False, sẽ rơi vào nhánh cuối và bucket
+    # nhầm. Phải check explicit.
+    if math.isnan(v):
+        return None
+    a = abs(v)
+    if a <= 0.5:
+        return "kèo_nhỏ"
+    if a <= 1.0:
+        return "kèo_vừa"
+    return "kèo_lớn"
+
+
+def tier_ou(line: float | None) -> str | None:
+    """Bucket opening O/U theo dải. Pure function, không phụ thuộc DB.
+
+    Mapping:
+      thấp : line <= 2.5
+      vừa  : 2.5 < line <= 3.0
+      cao  : line > 3.0
+    """
+    if line is None:
+        return None
+    try:
+        v = float(line)
+    except (TypeError, ValueError):
+        return None
+    if v <= 0:
+        return None  # OU line phải > 0
+    if math.isnan(v):
+        return None
+    if v <= 2.5:
+        return "thấp"
+    if v <= 3.0:
+        return "vừa"
+    return "cao"
+
+
+# ---------------------------------------------------------------------------
 # Raw-rows cache for compute_pattern_stats
 # ---------------------------------------------------------------------------
 # The SQL query (Step A) is the expensive part — ~3.5s over 13K FT matches
@@ -1792,6 +1868,8 @@ def compute_pattern_stats(
 
     # Top opening-HC buckets (only when no HC filter, for the breakdown view).
     by_open_hc: list[dict[str, Any]] = []
+    by_open_hc_tier: list[dict[str, Any]] = []
+    by_open_ou_tier: list[dict[str, Any]] = []
     if open_hc_n is None:
         from collections import defaultdict
         groups: dict[str, list[dict]] = defaultdict(list)
@@ -1810,6 +1888,43 @@ def compute_pattern_stats(
                 "avg_goals": agg.get("avg_goals"),
             })
 
+        # Hướng 3: Tier bucketing song song exact-line. Tier giúp tăng sample
+        # size cho tag_outcome_validate (nhiều bucket exact-line quá nhỏ để
+        # có ý nghĩa thống kê). Tier cố định: kèo_nhỏ / kèo_vừa / kèo_lớn
+        # và OU: thấp / vừa / cao.
+        tier_groups: dict[str, list[dict]] = defaultdict(list)
+        for r in rows:
+            line = _to_float(r.get("open_hh"))
+            t = tier_hc(line)
+            if t is not None:
+                tier_groups[t].append(r)
+        tier_ranked = sorted(tier_groups.items(), key=lambda kv: len(kv[1]), reverse=True)
+        for tname, sample in tier_ranked:
+            agg = _aggregate(sample)
+            by_open_hc_tier.append({
+                "tier": tname,
+                "n": agg["n"],
+                "fav_cover_rate": agg.get("fav_cover_rate"),
+                "over_rate": agg.get("over_rate"),
+                "avg_goals": agg.get("avg_goals"),
+            })
+
+        ou_tier_groups: dict[str, list[dict]] = defaultdict(list)
+        for r in rows:
+            t = tier_ou(_to_float(r.get("open_ou")))
+            if t is not None:
+                ou_tier_groups[t].append(r)
+        ou_tier_ranked = sorted(ou_tier_groups.items(), key=lambda kv: len(kv[1]), reverse=True)
+        for tname, sample in ou_tier_ranked:
+            agg = _aggregate(sample)
+            by_open_ou_tier.append({
+                "tier": tname,
+                "n": agg["n"],
+                "fav_cover_rate": agg.get("fav_cover_rate"),
+                "over_rate": agg.get("over_rate"),
+                "avg_goals": agg.get("avg_goals"),
+            })
+
     return {
         "n_total": n_total,
         "filters": {
@@ -1820,6 +1935,8 @@ def compute_pattern_stats(
         "bucket": _aggregate(bucket),
         "overall": _aggregate(rows),
         "by_open_hc": by_open_hc,
+        "by_open_hc_tier": by_open_hc_tier,
+        "by_open_ou_tier": by_open_ou_tier,
     }
 
 

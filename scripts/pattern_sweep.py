@@ -78,13 +78,25 @@ async def _run() -> int:
         print("[sweep] nothing to do")
         return 0
 
+    # Resolve the actual LLM call params once per run so the model string we log
+    # matches the one we pass down. resolve_call_params() also picks up the
+    # optional per-scope reasoning_effort override (e.g. AI_REASONING_EFFORT_CRON)
+    # and the AI_EXTRA_BODY escape hatch.
+    from app.analyzer.ai_client import resolve_call_params
+    call_params = resolve_call_params(scope="cron", model=model)
+
     ok = fail = empty = 0
     for i, m in enumerate(matches, 1):
         mid = m["id"]
         label = f"{m.get('competition','?')[:24]} | {m.get('home','?')} vs {m.get('away','?')}"
         try:
             res = await asyncio.wait_for(
-                AIP.analyze_and_store(mid, prestigious_only=prestigious),
+                AIP.analyze_and_store(
+                    mid,
+                    prestigious_only=prestigious,
+                    model=model,
+                    reasoning_effort=call_params["reasoning_effort"],
+                ),
                 timeout=per_call_to,
             )
             if res.get("parse_ok"):

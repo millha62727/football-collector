@@ -156,6 +156,7 @@ async def chat(
     timeout: int = _TIMEOUT,
     reasoning_effort: Optional[str] = None,
     model: Optional[str] = None,
+    scope: str = "ui",
 ) -> dict[str, Any]:
     """Low-level chat completion. Raises RuntimeError on any failure.
 
@@ -169,25 +170,29 @@ async def chat(
 
     `model` overrides the env-resolved model for this call only — pass a non-
     empty string to swap models per call (e.g. UI input box). Empty / None
-    falls back to `_model("ui")` since chat() is invoked from the analyzer
-    context, which is the UI scope. The override is sanitized (stripped, max
+    falls back to `_model(scope)`. The override is sanitized (stripped, max
     _MAX_MODEL_LEN chars) so a typo or hostile payload can't 400 the request.
+
+    `scope` selects which env var the model is resolved from when `model` is
+    None ("ui" → AI_MODEL_UI/AI_MODEL, "cron" → AI_MODEL_CRON/AI_MODEL).
+    Defaults to "ui" for backward compat with analyzer-page callers.
     """
-    if not is_configured("ui"):
+    if not is_configured(scope):
         raise RuntimeError(
-            "AI chưa được cấu hình (cần AI_BASE_URL + AI_API_KEY + AI_MODEL_UI/AI_MODEL trong .env)"
+            f"AI chưa được cấu hình cho scope={scope!r} "
+            f"(cần AI_BASE_URL + AI_API_KEY + AI_MODEL_{scope.upper()}/AI_MODEL trong .env)"
         )
     url = _base_url() + "/chat/completions"
     headers = {
         "Authorization": f"Bearer {_api_key()}",
         "Content-Type": "application/json",
     }
-    # Resolve per-call model override. Empty/None → use env default (UI scope).
+    # Resolve per-call model override. Empty/None → use env default for `scope`.
     # _clean_model returns the sanitized string or empty when nothing valid
     # was passed; ValueError is raised for over-long input.
     override = _clean_model(model)
     body = {
-        "model": override or _model("ui"),
+        "model": override or _model(scope),
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,

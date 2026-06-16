@@ -1,19 +1,23 @@
 # Plan: Cải tạo "công thức" (Formula Improvement) — 2026-06-16
 
 > Từ discussion 16/06 trong session `20260616_132431_2a0d9f24`.
-> Trạng thái: **Phase 0+1+2 DONE** (commit 17e8842, deployed, backfill applied, tests green). Phase 3+4 chưa làm.
 
-## 🎉 Final report (17/06 00:38 +07)
+## 🎉 Final report (17/06 +07)
 
 | Step | Result |
 |---|---|
-| Commit `17e8842` | pushed + deployed via GH Actions (~1 phút) |
+| Commit `17e8842` (Phase 1+2) | pushed + deployed via GH Actions |
 | Migration 004 | `open_hc_side TEXT` added, idempotent |
 | Backfill apply | **649/654 rows updated** (5 NULL = raw_features thiếu side) |
 | Distribution | home 372 / away 174 / level 103 / NULL 5 |
 | Test on container | `test_database_tier.py` ALL PASSED |
 | Test on container | `test_ai_helpers.py` ALL PASSED |
-| GitNexus re-index | 619 nodes, 2,354 edges |
+| **Commit `070e9b4` (Phase 3+4)** | local — not pushed yet, deploy via GH Actions |
+| **Phase 3** | `tag_outcome_validate()` + `wilson_ci95()` + aggregate_patterns enriched |
+| **Phase 4** | `weighted_avg_confidence` display-only |
+| **Test on local** | `test_tag_outcome.py` ALL PASSED (16 cases) |
+| **Test all 3 suites** | ALL PASSED |
+| **GitNexus re-index** | 655 nodes, 2,534 edges, 31 clusters, 56 flows |
 
 ## Mục tiêu
 

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Công thức &#x2014; Football Dashboard</title>
+<style>
+:root{--bg:#0d1117;--surface:#161b22;--card:#21262d;--border:#30363d;--primary:#58a6ff;--pdim:#1f3a5f;--red:#f85149;--green:#3fb950;--orange:#d29922;--purple:#bc8cff;--text:#c9d1d9;--muted:#8b949e;--r:6px;--font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10000}
+.hdr-logo{font-size:16px;font-weight:700;color:var(--primary);text-decoration:none}
+.hdr a{color:var(--muted);text-decoration:none;font-size:13px}
+.hdr a:hover{color:var(--primary)}
+.hdr a.active{color:var(--primary);font-weight:600}
+.hdr-spacer{flex:1}
+.btn-sm{padding:5px 12px;border-radius:var(--r);border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-size:12px;transition:all .15s;text-decoration:none;display:inline-block}
+.btn-sm:hover{border-color:var(--primary);color:var(--primary)}
+.btn-sm.active{background:var(--pdim);border-color:var(--primary);color:var(--primary)}
+.main{flex:1;padding:24px;max-width:1400px;margin:0 auto;width:100%}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px}
+.stat-label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.stat-value{font-size:22px;font-weight:700;color:var(--primary);font-variant-numeric:tabular-nums}
+.stat-sub{font-size:11px;color:var(--muted);margin-top:3px}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:14px}
+.panel-h{padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:13px;font-weight:700;color:var(--primary);display:flex;align-items:center;gap:8px}
+.panel-h .badge-count{color:var(--muted);font-weight:400;font-size:11px;margin-left:auto}
+.panel-b{padding:0;overflow-x:auto}
+table.tags{width:100%;border-collapse:collapse;font-size:12px;min-width:780px}
+table.tags th{padding:9px 10px;background:var(--surface);color:var(--muted);font-weight:600;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;white-space:nowrap;text-align:right}
+table.tags th.l{text-align:left}
+table.tags td{padding:8px 10px;border-bottom:1px solid #1a1f26;white-space:nowrap;font-variant-numeric:tabular-nums;text-align:right}
+table.tags td.l{text-align:left;font-family:ui-monospace,Menlo,Consolas,monospace}
+table.tags tr:last-child td{border-bottom:none}
+table.tags tr:hover td{background:rgba(255,255,255,.02)}
+.tag-name{color:var(--primary);font-weight:600}
+.cover-good{color:var(--green);font-weight:600}
+.cover-bad{color:var(--red);font-weight:600}
+.cover-neutral{color:var(--text)}
+.ci{color:var(--muted);font-size:10px;display:block;margin-top:1px}
+.insufficient{color:var(--orange);font-style:italic;font-size:10px;display:block;margin-top:2px}
+.legend{color:var(--muted);font-size:11px;padding:12px 14px;background:var(--surface);border-top:1px solid var(--border);line-height:1.5}
+.legend code{background:var(--bg);padding:1px 5px;border-radius:3px;font-size:11px;color:var(--primary)}
+.empty-state{padding:40px;text-align:center;color:var(--muted);font-size:13px}
+.empty-state h3{color:var(--text);margin-bottom:8px;font-size:15px}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin 0.8s linear infinite;margin-right:6px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.error{padding:14px;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);border-radius:var(--r);color:var(--red);font-size:12px}
+.ref-row{font-size:10px;color:var(--muted);padding:6px 14px;background:var(--surface);border-top:1px solid var(--border);display:flex;gap:16px;flex-wrap:wrap}
+.ref-row b{color:var(--text);font-weight:600}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <a href="/" class="hdr-logo">&#x1F4E6; Football Dashboard</a>
+  <a href="/">Dashboard</a>
+  <a href="/data">Data Browser</a>
+  <a href="/formula" class="active">Công thức</a>
+  <div class="hdr-spacer"></div>
+  <button id="refreshBtn" class="btn-sm">&#x21BB; Refresh</button>
+  <button id="logoutBtn" class="btn-sm">Đăng xuất</button>
+</div>
+
+<div class="main">
+
+  <div id="summary" class="summary">
+    <div class="stat">
+      <div class="stat-label">Tổng patterns</div>
+      <div class="stat-value" id="stat-n-patterns">-</div>
+      <div class="stat-sub" id="stat-prestige">đang tải...</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Avg confidence</div>
+      <div class="stat-value" id="stat-avg-conf">-</div>
+      <div class="stat-sub">trung bình đơn giản</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Weighted confidence</div>
+      <div class="stat-value" id="stat-weighted-conf">-</div>
+      <div class="stat-sub">weight = sqrt(n/30)</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Sweep progress</div>
+      <div class="stat-value" id="stat-progress">-</div>
+      <div class="stat-sub" id="stat-progress-sub">-</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-h">
+      <span>Top tags × Outcome thực tế</span>
+      <span class="badge-count" id="tag-count"></span>
+    </div>
+    <div class="panel-b" id="tagsPanel">
+      <div class="empty-state"><span class="spinner"></span>Đang tải aggregate...</div>
+    </div>
+    <div class="ref-row">
+      <span><b>Cover rate</b> = tỉ lệ pattern có tag này mà cửa trên thực sự cover handicap</span>
+      <span><b>CI95</b> = Wilson score interval (z=1.96). Hiện <code>X% (lo-hi)</code></span>
+      <span><b>insufficient_data</b> = valid_n &lt; 15 → ẩn metric</span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const _esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+const _pct = (x) => x == null ? '—' : (x*100).toFixed(1) + '%';
+const _ci = (lo, hi) => (lo==null||hi==null) ? '—' : `${(lo*100).toFixed(1)}–${(hi*100).toFixed(1)}`;
+
+function _colorRate(r) {
+  if (r == null) return 'cover-neutral';
+  if (r >= 0.55) return 'cover-good';
+  if (r <= 0.45) return 'cover-bad';
+  return 'cover-neutral';
+}
+
+async function apiFetch(path) {
+  const r = await fetch(path, {credentials: 'same-origin'});
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(`HTTP ${r.status}: ${text.slice(0, 200)}`);
+  }
+  return r.json();
+}
+
+async function load() {
+  $('#tagsPanel').innerHTML = '<div class="empty-state"><span class="spinner"></span>Đang tải aggregate...</div>';
+  try {
+    const data = await apiFetch('/api/analyzer/patterns-aggregate?prestigious_only=true');
+    const agg = data.aggregate || {};
+    const progress = data.progress || {};
+
+    // Summary
+    $('#stat-n-patterns').textContent = agg.n_patterns ?? 0;
+    $('#stat-prestige').textContent = agg.prestigious_only ? 'chỉ giải VĐQG lớn' : 'tất cả giải';
+    $('#stat-avg-conf').textContent = agg.avg_confidence == null ? '—' : (agg.avg_confidence*100).toFixed(1) + '%';
+    $('#stat-weighted-conf').textContent = agg.weighted_avg_confidence == null ? '—' : (agg.weighted_avg_confidence*100).toFixed(1) + '%';
+    if (progress.processed != null && progress.eligible != null) {
+      const pct = progress.eligible > 0 ? (progress.processed / progress.eligible * 100) : 0;
+      $('#stat-progress').textContent = `${progress.processed}/${progress.eligible}`;
+      $('#stat-progress-sub').textContent = `${pct.toFixed(0)}% · pending ${progress.pending || 0}`;
+    } else {
+      $('#stat-progress').textContent = '—';
+      $('#stat-progress-sub').textContent = 'AI chưa cấu hình';
+    }
+
+    // Tags table
+    const tags = agg.top_tags || [];
+    $('#tag-count').textContent = `${tags.length} tags`;
+
+    if (tags.length === 0) {
+      $('#tagsPanel').innerHTML = '<div class="empty-state"><h3>Chưa có pattern nào</h3>Sweep chưa chạy hoặc chưa có FT match nào được xử lý.</div>';
+      return;
+    }
+
+    const rows = tags.map(t => {
+      const rate = t.fav_cover_rate_actual;
+      const rateCell = t.insufficient_data
+        ? '<span class="insufficient">insufficient</span>'
+        : `<span class="${_colorRate(rate)}">${_pct(rate)}</span>
+           <span class="ci">CI ${_ci(t.ci95_low, t.ci95_high)}</span>`;
+      return `<tr>
+        <td class="l"><span class="tag-name">${_esc(t.tag)}</span></td>
+        <td>${t.n}</td>
+        <td>${t.valid_n}</td>
+        <td>${rateCell}</td>
+        <td>${t.avg_margin == null ? '—' : t.avg_margin.toFixed(2)}</td>
+        <td>${t.avg_total_goals == null ? '—' : t.avg_total_goals.toFixed(2)}</td>
+        <td>${t.ci_half_width == null ? '—' : '±' + (t.ci_half_width*100).toFixed(1) + '%'}</td>
+      </tr>`;
+    }).join('');
+
+    $('#tagsPanel').innerHTML = `<table class="tags">
+      <thead>
+        <tr>
+          <th class="l">Tag</th>
+          <th>n</th>
+          <th>valid_n</th>
+          <th>Cover rate</th>
+          <th>Avg margin</th>
+          <th>Avg total</th>
+          <th>CI ±</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  } catch (e) {
+    $('#tagsPanel').innerHTML = `<div class="error">Lỗi tải aggregate: ${_esc(e.message)}</div>`;
+  }
+}
+
+$('#refreshBtn').addEventListener('click', load);
+$('#logoutBtn').addEventListener('click', async () => {
+  await fetch('/api/logout', {method: 'POST', credentials: 'same-origin'});
+  location.href = '/login';
+});
+
+// Idle lock: redirect tới /login khi server signal
+let idleTimer = null;
+function resetIdle() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => location.href = '/login', 6 * 60 * 1000);
+}
+['click','keydown','mousemove'].forEach(ev => document.addEventListener(ev, resetIdle, {passive: true}));
+resetIdle();
+
+load();
+</script>
+</body>
+</html>

@@ -18,6 +18,8 @@
 | **Test on local** | `test_tag_outcome.py` ALL PASSED (16 cases) |
 | **Test all 3 suites** | ALL PASSED |
 | **GitNexus re-index** | 655 nodes, 2,534 edges, 31 clusters, 56 flows |
+| **UI (Phase A)** | Page mới `/formula` — render tag × outcome với Wilson CI95 + insufficient guard |
+| **File thêm** | `app/templates/formula.html` (10K), route `GET /formula` trong `analyzer/views.py`, link trong `data.html` nav |
 
 ## Mục tiêu
 

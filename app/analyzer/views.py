@@ -7,7 +7,7 @@ from typing import Any, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from ..auth import require_auth
 from ..database import get_match_by_id, get_odds_history_for_analyzer
@@ -370,6 +370,19 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
 @router.get("/analyzer", response_class=HTMLResponse)
 async def analyzer_page(user: str = Depends(require_auth)):
     return HTMLResponse(_PAGE_HTML)
+
+
+@router.get("/formula", response_class=HTMLResponse)
+async def formula_page(user: str = Depends(require_auth)):
+    """Dashboard hiển thị tag × outcome thực tế (Hướng 1+2 — Phase 3+4).
+
+    Serve template file `app/templates/formula.html` qua FileResponse.
+    Template render bảng tags với fav_cover_rate_actual, Wilson CI95, và
+    `insufficient_data` guard từ `/api/analyzer/patterns-aggregate`.
+    """
+    import os
+    tmpl = os.path.join(os.path.dirname(__file__), "..", "templates", "formula.html")
+    return FileResponse(tmpl, media_type="text/html")
 
 
 @router.post("/api/analyzer/parse")

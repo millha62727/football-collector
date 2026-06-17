@@ -180,11 +180,25 @@ def evaluate_match(match: dict[str, Any], use_llm: bool = False) -> dict[str, An
                 loop.close()
             parsed = llm_result.get("parsed") or {}
             pred = parsed.get("prediction") if isinstance(parsed.get("prediction"), dict) else {}
+            # prediction.score = "x-y" — split into home/away
+            score_str = pred.get("score") if isinstance(pred, dict) else None
+            pred_home, pred_away, pred_total = None, None, None
+            if isinstance(score_str, str) and "-" in score_str:
+                try:
+                    parts = score_str.split("-")
+                    pred_home = int(parts[0].strip())
+                    pred_away = int(parts[1].strip())
+                    pred_total = pred_home + pred_away
+                except (ValueError, IndexError):
+                    pass
             prediction = {
-                "home": pred.get("home"),
-                "away": pred.get("away"),
-                "total": pred.get("total"),
-                "outcome": pred.get("outcome"),
+                "score": score_str,
+                "home": pred_home,
+                "away": pred_away,
+                "total": pred_total,
+                "handicap_lean": pred.get("handicap_lean"),
+                "ou_lean": pred.get("ou_lean"),
+                "outcome": pred.get("handicap_lean"),  # alias
                 "confidence": parsed.get("confidence"),
             }
         except Exception as e:

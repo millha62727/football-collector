@@ -199,6 +199,7 @@ def evaluate_match(match: dict[str, Any], use_llm: bool = False, model: Optional
                 "handicap_lean": pred.get("handicap_lean"),
                 "ou_lean": pred.get("ou_lean"),
                 "outcome": pred.get("handicap_lean"),  # alias
+                "more_goals_likely": pred.get("more_goals_likely"),
                 "confidence": parsed.get("confidence"),
             }
             # Lưu thêm summary/signals/tags để so sánh "tag công thức" giữa các model

@@ -55,10 +55,21 @@ def build_feature_digest(
         opening_ou = _opening_ou_fallback(rows)
     return {
         "meta": meta or {},
-        # NOTE: was `real_score` (unlabeled) — model was copying this as `prediction.score`
-        # without realizing it represented the cutoff minute, not the FT score.
-        # Renamed + tagged with cutoff_minute so the prompt can call it out explicitly.
-        "score_at_cutoff": [result.get("real_fh"), result.get("real_fa")],
+        # OPTION B (post-Option-A test): score_at_cutoff was REMOVED from the
+        # payload sent to the LLM. Earlier option A (label + warning) only
+        # changed 1/4 test cases — flash started predicting 1-4 instead of
+        # copying 1-3 on Estonia vs Italy, but pro/flash both kept copying
+        # 3-0 on Bombay YMCA (FT=3-1, +1 goal after 75'). The shortcut was
+        # too easy to keep ignoring.
+        #
+        # Option B removes the shortcut entirely. The model now has to infer
+        # the FT score from:
+        #   - milestones (score progression up to 75')
+        #   - HC drift (opening vs live)
+        #   - OU drift (opening vs live)
+        #   - goal_count_detected / goal_sequence
+        #   - base-rate stats (fav_cover_rate, over_rate, etc.)
+        #   - cutoff_minute (still present so it knows the truncation point)
         "cutoff_minute": 75,
         "effective_score": [result.get("effective_fh"), result.get("effective_fa")],
         "opening_hc": first.get("a"),
@@ -154,17 +165,20 @@ NHIỆM VỤ:
 - Không đưa lời khuyên cá cược chắc thắng. Viết ngắn, thực dụng, tiếng Việt.
 - CHỈ trả JSON, không kèm giải thích ngoài JSON.
 
-⚠️ LƯU Ý QUAN TRỌNG VỀ `score_at_cutoff`:
-- `score_at_cutoff` trong FEATURES_JSON là tỉ số TẠI PHÚT {features.get('cutoff_minute', 75)} (cutoff)
-  — KHÔNG PHẢI tỉ số cuối trận (FT).
-- Bạn PHẢI dự đoán tỉ số FT thật ở `prediction.score`, có tính đến:
-  (1) ~15-20 phút còn lại có thể có thêm bàn thắng
-  (2) momentum hiện tại (HC drift, OU drift, goals gần đây)
-  (3) base-rate stats cho bucket HC/OU tương tự
-- KHÔNG được copy `score_at_cutoff` làm `prediction.score` — đó là answer key shortcut,
-  sẽ làm sai khi FT khác cutoff (ví dụ cutoff 3-0 nhưng FT 3-1).
-- Nếu bạn thực sự nghĩ không có thêm bàn, hãy ghi `prediction.score = score_at_cutoff`
-  và ĐẶT `prediction.more_goals_likely = false` với confidence thấp.
+⚠️ LƯU Ý QUAN TRỌNG — DỰ ĐOÁN TỈ SỐ FT TỪ DATA ĐẾN PHÚT {features.get('cutoff_minute', 75)}:
+- Bạn đang nhìn dữ liệu trận đấu được CẮT TẠI PHÚT {features.get('cutoff_minute', 75)} (cutoff).
+- Bạn KHÔNG được biết tỉ số hiện tại 1 cách tường minh — phải suy ra từ:
+    + `milestones`: danh sách các cột mốc (tỉ số + handicap + tổng bàn qua từng mốc),
+      milestone CUỐI CÙNG không phải null = tỉ số tại cutoff.
+    + `goal_count_detected`: số bàn đã ghi.
+    + `goal_sequence`: thứ tự các bàn thắng.
+- Bạn PHẢI dự đoán tỉ số FT (full-time) thật, có tính:
+    (1) ~15-20 phút còn lại có thể có thêm bàn thắng
+    (2) momentum hiện tại (HC drift, OU drift, goals gần đây)
+    (3) base-rate stats cho bucket HC/OU tương tự
+- Nếu nghĩ không thêm bàn: vẫn phải ghi `prediction.score` (dự đoán FT) và
+  đặt `prediction.more_goals_likely = false` với confidence thấp.
+- Nếu sample size nhỏ (n<30): BẮT BUỘC confidence ≤ 0.4.
 
 FEATURES_JSON={_json_for_prompt(features)}
 BASE_RATE_JSON={_json_for_prompt(_trim_stats_for_prompt(stats))}

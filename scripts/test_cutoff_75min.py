@@ -90,7 +90,7 @@ def cut_odds_history_at_75min(db_rows: list[dict[str, Any]]) -> list[dict[str, A
     return out
 
 
-def evaluate_match(match: dict[str, Any], use_llm: bool = False) -> dict[str, Any]:
+def evaluate_match(match: dict[str, Any], use_llm: bool = False, model: Optional[str] = None) -> dict[str, Any]:
     """Đánh giá 1 trận: cắt CSV tại 75', chạy analyze, so với FT thật.
 
     Returns dict với:
@@ -174,7 +174,7 @@ def evaluate_match(match: dict[str, Any], use_llm: bool = False) -> dict[str, An
             loop = asyncio.new_event_loop()
             try:
                 llm_result = loop.run_until_complete(
-                    analyze_match(csv_rows, meta=meta, prestigious_only=False, model=None)
+                    analyze_match(csv_rows, meta=meta, prestigious_only=False, model=model)
                 )
             finally:
                 loop.close()
@@ -201,6 +201,11 @@ def evaluate_match(match: dict[str, Any], use_llm: bool = False) -> dict[str, An
                 "outcome": pred.get("handicap_lean"),  # alias
                 "confidence": parsed.get("confidence"),
             }
+            # Lưu thêm summary/signals/tags để so sánh "tag công thức" giữa các model
+            prediction["_summary"] = (parsed.get("summary") or "")[:300]
+            prediction["_signals"] = parsed.get("signals") if isinstance(parsed.get("signals"), list) else []
+            prediction["_tags"] = parsed.get("tags") if isinstance(parsed.get("tags"), list) else []
+            prediction["_model_used"] = llm_result.get("model") or model
         except Exception as e:
             prediction = {"error": str(e)[:100]}
 
@@ -229,6 +234,7 @@ def main() -> int:
     parser.add_argument("--count", type=int, default=10, help="số trận random (default 10)")
     parser.add_argument("--seed", type=int, default=None, help="random seed để reproduce")
     parser.add_argument("--llm", action="store_true", help="dùng LLM (chậm, tốn API)")
+    parser.add_argument("--model", type=str, default=None, help="tên model override (vd: Claude.7-kiro). Mặc định dùng AI_MODEL_UI")
     parser.add_argument("--match-id", type=str, default=None, help="test 1 trận cụ thể")
     args = parser.parse_args()
 
@@ -254,7 +260,7 @@ def main() -> int:
     print("=" * 100)
 
     for i, m in enumerate(matches, 1):
-        r = evaluate_match(m, use_llm=args.llm)
+        r = evaluate_match(m, use_llm=args.llm, model=args.model)
         results.append(r)
 
         if "error" in r:

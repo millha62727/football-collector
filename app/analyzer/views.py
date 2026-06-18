@@ -686,6 +686,43 @@ async def api_patterns_aggregate(
 
 
 # ---------------------------------------------------------------------------
+# tag_lookup — P20 (2026-06-18): queryable base rate by tag + hc/ou filter
+# ---------------------------------------------------------------------------
+# Returns empirical base rate for a specific tag, with Wilson CI95, sample
+# size, tier breakdown, and year breakdown. Built on top of tag_outcome_validate
+# (same statistical machinery used by patterns-aggregate). See `tag_lookup`
+# in app/database.py for full docstring + caveats.
+@router.get("/api/analyzer/tag-lookup")
+async def api_tag_lookup(
+    tag: str,
+    open_hc: Optional[str] = None,
+    open_ou: Optional[str] = None,
+    min_n: int = 15,
+    user: str = Depends(require_auth),
+):
+    """Look up the actual base rate for a pattern tag.
+
+    Query params:
+      tag      (required) — pattern tag, e.g. 'fav_cover', 'clean_sheet_away'
+      open_hc  (optional) — filter by opening handicap, e.g. '-0.5', '0.5'
+      open_ou  (optional) — filter by opening OU line, e.g. '2.5', '3'
+      min_n    (optional, default 15) — minimum valid_n for rate to be reported
+
+    Response: see tag_lookup() in app/database.py.
+    """
+    if not tag or not tag.strip():
+        raise HTTPException(400, "tag không được trống")
+    if len(tag) > 100:
+        raise HTTPException(400, "tag quá dài (max 100 chars)")
+    if min_n < 1 or min_n > 1000:
+        raise HTTPException(400, "min_n phải trong [1, 1000]")
+
+    from ..database import tag_lookup as _tag_lookup
+    result = _tag_lookup(tag=tag.strip(), open_hc=open_hc, open_ou=open_ou, min_n=min_n)
+    return JSONResponse(result)
+
+
+# ---------------------------------------------------------------------------
 # Live match → analyzer
 # ---------------------------------------------------------------------------
 

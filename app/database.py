@@ -2142,6 +2142,141 @@ def _parse_open_line_to_float(line: Optional[str]) -> Optional[float]:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Lookup table — turn stored patterns into a queryable base-rate table (P20)
+# ---------------------------------------------------------------------------
+# 2026-06-18: P9-P17 killed every predictive signal, so pivot from "find edge"
+# to "data platform value". tag_lookup() is the API: given a tag (and optional
+# hc/ou bucket), return actual base rate + Wilson CI + sample size, derived
+# from real FT outcomes. This makes the 385 OK patterns queryable — not just
+# descriptive tags.
+#
+# Example:
+#   tag_lookup("fav_cover") → 0.978 cover rate, n=147, CI [93.9%, 99.3%]
+#   tag_lookup("fav_cover", open_hc="-0.5") → filter to handicap tier
+#
+# Important caveat: tag is descriptive, not predictive (P9). Caller should
+# not use this as "predictor" — it answers "given this pattern occurred
+# historically, what was the actual outcome distribution?" — not "if pattern
+# X then outcome Y". Use only with OOS verification + vig adjustment.
+
+
+def tag_lookup(
+    tag: str,
+    open_hc: Optional[str] = None,
+    open_ou: Optional[str] = None,
+    min_n: int = MIN_VALIDATE_N,
+) -> dict[str, Any]:
+    """Look up empirical base rate for a tag, optionally filtered by hc/ou.
+
+    Args:
+        tag: The pattern tag to look up (e.g. 'fav_cover', 'clean_sheet_away').
+        open_hc: Optional handicap filter (canonical string, e.g. '-0.5', '0', '0.5').
+        open_ou: Optional OU filter (canonical string, e.g. '2.5', '3').
+        min_n: Minimum valid_n required for the rate to be reported
+               (insufficient_data=True if below).
+
+    Returns dict with:
+      - tag, n_total (rows with this tag), valid_n (rows with cover data)
+      - fav_cover_rate_actual, ci95_low, ci95_high, ci_half_width
+      - avg_margin, avg_total_goals, avg_confidence
+      - insufficient_data: True if valid_n < min_n
+      - tier_breakdown: list of {tier, n, valid_n, fav_cover_rate_actual, ...}
+      - year_breakdown: list of {year, n, valid_n, fav_cover_rate_actual, ...}
+        (so caller can spot OOS instability)
+    """
+    with _connect() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT p.tags, p.confidence, p.open_hc, p.open_hc_side, p.open_ou,
+                   m.home_score, m.away_score, m.competition,
+                   EXTRACT(YEAR FROM m.start_time_utc::timestamptz)::int AS yr
+              FROM match_patterns p
+              JOIN matches m ON m.id = p.match_id
+             WHERE p.parse_ok = TRUE
+        """)
+        rows = cur.fetchall()
+
+    def _match_open_hc(r) -> bool:
+        if open_hc is None:
+            return True
+        return _norm_match_str(r.get("open_hc")) == _norm_match_str(open_hc)
+
+    def _match_open_ou(r) -> bool:
+        if open_ou is None:
+            return True
+        return _norm_match_str(r.get("open_ou")) == _norm_match_str(open_ou)
+
+    def _has_tag(r) -> bool:
+        return tag in (r.get("tags") or [])
+
+    rows = [r for r in rows if _has_tag(r) and _match_open_hc(r) and _match_open_ou(r)]
+
+    # Main outcome (reuses existing helper)
+    outcome = tag_outcome_validate(tag, rows, min_n=min_n)
+
+    # avg_confidence for this tag (LLM confidence, not outcome)
+    confs = [r["confidence"] for r in rows if r.get("confidence") is not None]
+    avg_confidence = round(sum(confs) / len(confs), 3) if confs else None
+
+    # Tier breakdown (kèo_nhỏ / kèo_vừa / kèo_lớn) — reuses tier_hc
+    by_tier: dict[str, list] = {"kèo_nhỏ": [], "kèo_vừa": [], "kèo_lớn": [], "unknown": []}
+    for r in rows:
+        try:
+            line = _parse_open_line_to_float(r.get("open_hc"))
+        except Exception:
+            line = None
+        tier = tier_hc(line) if line is not None else None
+        by_tier.setdefault(tier or "unknown", []).append(r)
+    tier_breakdown: list[dict[str, Any]] = []
+    for tier_name in ("kèo_nhỏ", "kèo_vừa", "kèo_lớn", "unknown"):
+        sub = by_tier.get(tier_name, [])
+        if not sub:
+            continue
+        t_out = tag_outcome_validate(tag, sub, min_n=min_n)
+        tier_breakdown.append({
+            "tier": tier_name,
+            "n": len(sub),
+            "valid_n": t_out["valid_n"],
+            "fav_cover_rate_actual": t_out["fav_cover_rate_actual"],
+            "insufficient_data": t_out["insufficient_data"],
+        })
+
+    # Year breakdown — for OOS awareness (P13)
+    by_yr: dict[int, list] = {}
+    for r in rows:
+        by_yr.setdefault(r.get("yr") or 0, []).append(r)
+    year_breakdown: list[dict[str, Any]] = []
+    for yr in sorted(by_yr):
+        sub = by_yr[yr]
+        y_out = tag_outcome_validate(tag, sub, min_n=min_n)
+        year_breakdown.append({
+            "year": yr,
+            "n": len(sub),
+            "valid_n": y_out["valid_n"],
+            "fav_cover_rate_actual": y_out["fav_cover_rate_actual"],
+            "insufficient_data": y_out["insufficient_data"],
+        })
+
+    return {
+        "tag": tag,
+        "filters": {"open_hc": open_hc, "open_ou": open_ou, "min_n": min_n},
+        "n_total": outcome["n"],
+        "valid_n": outcome["valid_n"],
+        "fav_cover_rate_actual": outcome["fav_cover_rate_actual"],
+        "ci95_low": outcome["ci95_low"],
+        "ci95_high": outcome["ci95_high"],
+        "ci_half_width": outcome["ci_half_width"],
+        "avg_margin": outcome["avg_margin"],
+        "avg_total_goals": outcome["avg_total_goals"],
+        "avg_confidence": avg_confidence,
+        "insufficient_data": outcome["insufficient_data"],
+        "reason": outcome.get("reason"),
+        "tier_breakdown": tier_breakdown,
+        "year_breakdown": year_breakdown,
+    }
+
+
 def tag_outcome_validate(
     tag: str,
     rows: Sequence[dict[str, Any]],

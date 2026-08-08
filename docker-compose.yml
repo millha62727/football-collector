@@ -28,9 +28,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # Web container reuses the Dockerfile-level HEALTHCHECK (db_ping) — that
-    # already proves both uvicorn imports and the DB pool resolve. We override
-    # with an HTTP probe instead so a half-deadlocked event loop is also caught.
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4); sys.exit(0)\" || exit 1"]
       interval: 30s
@@ -48,8 +45,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # Heartbeat-based: collector writes `last_heartbeat` to collector_state
-    # every loop iteration. Threshold defaults to 3 × POLL_INTERVAL.
     healthcheck:
       test: ["CMD", "python", "scripts/healthcheck_collector.py"]
       interval: 30s
@@ -58,5 +53,22 @@ services:
       retries: 3
     command: python run_collector.py
 
+  vector:
+    build: ./vector
+    container_name: football_vector
+    restart: always
+    ports:
+      - "127.0.0.1:8100:8100"
+    environment:
+      DB_HOST: db
+      DB_NAME: football
+      DB_USER: football
+      DB_PASS: football
+    volumes:
+      - vector_logs:/app/flow_log
+      - vector_events:/app/flow_events
+
 volumes:
   pgdata:
+  vector_logs:
+  vector_events:

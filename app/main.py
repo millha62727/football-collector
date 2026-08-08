@@ -78,6 +78,15 @@ from fastapi.templating import Jinja2Templates  # noqa: E402  — keep close to 
 templates = Jinja2Templates(directory=_TEMPLATES_DIR)
 
 # ---- Static files (analyzer.js etc.) --------------------------------------
+# Register font MIME types — slim Python images ship a mimetypes DB that
+# lacks woff/woff2, so StarStaticFiles would serve them as
+# application/octet-stream (breaks font caching + gzip negotiation).
+import mimetypes as _mimetypes
+for _ext, _mt in ((".woff", "font/woff"), (".woff2", "font/woff2"),
+                  (".ttf", "font/ttf"), (".otf", "font/otf")):
+    if _mimetypes.guess_type("f" + _ext)[0] is None:
+        _mimetypes.add_type(_mt, _ext)
+
 _STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 if os.path.isdir(_STATIC_DIR):
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
@@ -132,8 +141,8 @@ async def _auth_redirect(request: Request, exc):
 # ---- Health endpoint (no auth) -------------------------------------------
 @app.get("/api/health")
 async def health():
-    state = get_collector_state()
-    return JSONResponse({"status": "ok", "collector": {k: v for k, v in state.items() if k != "logs"}, "stats": get_stats()})
+    # no info leak
+    return JSONResponse({"status": "ok"})
 
 # ---------------------------------------------------------------------------
 # Auth routes
@@ -217,6 +226,38 @@ async def api_verify_otp(request: Request, payload: dict = Body(...)):
     )
     return resp
 
+@app.post("/api/auth/login")
+async def api_password_login(request: Request, payload: dict = Body(...)):
+    from .database import verify_user
+
+    ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(ip):
+        return JSONResponse(
+            {"ok": False, "error": "Qua nhieu lan thu. Vui long doi 1 phut."},
+            status_code=429,
+        )
+
+    username = (payload.get("username") or "").strip()
+    password = (payload.get("password") or "").strip()
+    if not username or not password:
+        return JSONResponse({"ok": False, "error": "Thieu username hoac password"}, status_code=400)
+
+    if not verify_user(username, password):
+        print(f"[WARN] Failed password login for '{username}' from {ip}", flush=True)
+        return JSONResponse({"ok": False, "error": "Sai username hoac password"}, status_code=401)
+
+    print(f"[INFO] User '{username}' logged in via password from {ip}", flush=True)
+    token = create_token(username)
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(
+        "auth_token", token,
+        httponly=True, samesite="lax", secure=False,
+        max_age=86400,
+    )
+    return resp
+
+
+
 
 @app.post("/logout")
 async def logout():
@@ -249,6 +290,7 @@ async def match_detail_page(request: Request, match_id: str, user: str = Depends
 
 @app.get("/api/status")
 async def api_status(user: str = Depends(require_auth)):
+    # no info leak
     state = get_collector_state()
     logs  = state.pop("logs", [])
     return JSONResponse({
@@ -319,7 +361,7 @@ async def api_force(user: str = Depends(require_auth)):
 # When the user lands on /market we set an HttpOnly cookie `market_gate=pending`.
 # A middleware (_market_gate, registered above) bounces every request for the
 # real app routes back to /market while the cookie is set. The cookie is
-# cleared only when /api/lock/verify-otp succeeds, so the only way out is a
+# cleared only when /api/lock/verify succeeds, so the only way out is a
 # valid Telegram OTP — even repeated Back-button presses just land back here.
 _MARKET_GATE_COOKIE = "market_gate"
 _MARKET_GATE_MAX_AGE = 60 * 60 * 24  # 24h
@@ -344,50 +386,25 @@ async def data_browser_page(request: Request, user: str = Depends(require_auth))
     return templates.TemplateResponse(request, "data.html")
 
 
-@app.post("/api/lock/request-otp")
-async def api_lock_request_otp(user: str = Depends(require_auth)):
-    """Send an unlock-OTP to the configured Telegram chats for the locked user."""
-    from .database import store_otp
-    from . import telegram as tg
 
-    diag = tg.diagnose()
-    if not diag["has_bot_token"] or not diag["has_chat_ids"]:
-        return JSONResponse(
-            {"ok": False, "error": f"Bot Telegram chưa được cấu hình ({diag})"},
-            status_code=500,
-        )
-    otp = f"{secrets.randbelow(1_000_000):06d}"
-    store_otp(user, "unlock", otp, _OTP_TTL)
-    result = tg.send_unlock_otp(user, otp, _OTP_TTL)
-    if not result.get("ok"):
-        return JSONResponse(
-            {"ok": False, "error": f"Không gửi được Telegram: {result.get('error') or ''}"},
-            status_code=502,
-        )
-    print(f"[INFO] Unlock OTP sent to {result['sent']}/{result['total']} chats for '{user}'", flush=True)
-    return {"ok": True, "ttl_seconds": _OTP_TTL}
+@app.post("/api/lock/verify")
+async def api_lock_verify(payload: dict = Body(...), user: str = Depends(require_auth)):
+    from .database import verify_user
 
+    password = (payload.get("password") or "").strip()
+    if not password:
+        return JSONResponse({"ok": False, "error": "Thieu mat khau"}, status_code=400)
 
-@app.post("/api/lock/verify-otp")
-async def api_lock_verify_otp(payload: dict = Body(...), user: str = Depends(require_auth)):
-    from .database import verify_and_consume_otp
-    otp = (payload.get("otp") or "").strip()
-    if not otp:
-        return JSONResponse({"ok": False, "error": "Thiếu OTP"}, status_code=400)
-    if verify_and_consume_otp(user, "unlock", otp):
-        resp = JSONResponse({"ok": True})
-        # Also clear the market gate (if set) — same OTP serves both idle-lock
-        # and market-return flows. The cookie was set with HttpOnly so JS can't
-        # tamper; clearing here is the only escape from /market.
-        resp.delete_cookie(_MARKET_GATE_COOKIE, path="/")
-        return resp
-    return JSONResponse({"ok": False, "error": "OTP không đúng hoặc đã hết hạn"}, status_code=401)
+    if not verify_user(user, password):
+        return JSONResponse({"ok": False, "error": "Sai mat khau"}, status_code=401)
 
-
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(_MARKET_GATE_COOKIE, path="/")
+    return resp
 @app.get("/api/lock/config")
 async def api_lock_config(user: str = Depends(require_auth)):
     """Frontend reads idle timeout from here so the value lives in .env only."""
-    return {"idle_seconds": _IDLE_LOCK_SECONDS, "otp_ttl_seconds": _OTP_TTL}
+    return {"idle_seconds": _IDLE_LOCK_SECONDS}
 
 
 @app.get("/api/stats/timeline")

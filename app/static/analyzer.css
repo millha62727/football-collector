@@ -1,0 +1,123 @@
+/* ═══════════════════════════════════════════════════════════
+   ANALYZER — Stadium Night theme (đồng bộ Football Ops v3)
+   Load SAU inline <style> → override bằng độ đặc hiệu cao hơn.
+   Pure CSS, KHÔNG thêm JS. Animations: opacity/transform only.
+   ═══════════════════════════════════════════════════════════ */
+
+html:root{
+  --bg:#0a0b0a;--surface:#0e0f0e;--card:#111812;--border:#252525;
+  --primary:#3ddc84;--pdim:#141412;
+  --red:#ff4d5e;--green:#3ddc84;--orange:#ffc94d;--purple:#c9a6ff;
+  --home:#3ddc84;--away:#c9a6ff;--level:#858785;
+  --text:#e0e1e0;--muted:#94a19a;--r:8px;
+  --font:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --display:'Archivo','IBM Plex Sans',sans-serif;
+}
+body{font-family:var(--font);background:
+  radial-gradient(1200px 800px at 12% -10%, #0c1a12 0%, transparent 55%),
+  radial-gradient(1000px 700px at 90% -10%, #131313 0%, transparent 55%),
+  var(--bg);
+  color:var(--text)}
+
+/* ── lớp ánh sáng broadcast (fixed, screen-blend, phủ viewport) ── */
+.an-flood{position:fixed;inset:0;z-index:5;pointer-events:none;mix-blend-mode:screen;opacity:1;
+  background:
+    conic-gradient(from 14deg at -1% -6%, transparent 0deg, rgba(227,233,240,0.036) 5deg, rgba(227,233,240,0.096) 12deg, rgba(227,233,240,0.042) 20deg, transparent 30deg),
+    conic-gradient(from 121deg at 101% -6%, transparent 0deg, rgba(255,163,48,0.044) 5deg, rgba(255,163,48,0.112) 12deg, rgba(255,163,48,0.048) 19deg, transparent 29deg),
+    radial-gradient(1300px 1100px at 3% -8%, rgba(227,233,240,0.11), transparent 65%),
+    radial-gradient(1150px 980px at 97% -8%, rgba(255,163,48,0.136), transparent 65%),
+    radial-gradient(1700px 700px at 50% 124%, rgba(227,233,240,0.048), transparent 60%);
+  animation:anGlow 34s ease-in-out infinite alternate}
+@keyframes anGlow{from{opacity:.75}to{opacity:1}}
+.an-vig{position:fixed;inset:0;z-index:2;pointer-events:none;
+  background:radial-gradient(120% 90% at 50% 42%, transparent 58%, rgba(4,4,4,.30) 88%, rgba(1,3,2,.58) 100%)}
+.an-grain{position:fixed;inset:-50%;z-index:60;pointer-events:none;opacity:.05;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+@media (prefers-reduced-motion: reduce){.an-flood{animation:none}}
+
+/* ── header ── */
+.hdr{background:linear-gradient(180deg,#0e0e0e 0%,#0b0b0b 100%);border-bottom:1px solid #1f1f1f;
+  box-shadow:0 1px 0 rgba(61,220,132,0.052), 0 10px 30px -12px rgba(0,0,0,.7);backdrop-filter:blur(6px)}
+.hdr-logo{font-family:var(--display);font-stretch:112%;font-weight:800;letter-spacing:.6px;
+  text-transform:uppercase;color:var(--primary);text-shadow:0 0 22px rgba(61,220,132,0.157)}
+.hdr a{transition:color .15s}
+.ai-badge{border:1px solid #333333 !important}
+
+/* ── buttons ── */
+.btn-sm{background:linear-gradient(180deg,#141414 0%,#101010 100%);border-color:#2c2c2c;color:var(--text)}
+.btn-sm:hover{border-color:var(--primary);color:var(--primary);box-shadow:0 0 0 1px rgba(61,220,132,0.102), 0 6px 18px -8px rgba(61,220,132,0.157);transform:translateY(-1px)}
+.btn-sm.danger:hover{border-color:var(--red);color:var(--red);box-shadow:0 0 0 1px rgba(255,77,94,.22)}
+
+/* ── topbar / match info ── */
+.topbar{background:linear-gradient(165deg,#131513 0%,#0e0f0e 100%);border-color:#282828;
+  box-shadow:0 10px 30px -14px rgba(0,0,0,.65)}
+.drop{border-color:#2b2b2b;background:rgba(61,220,132,0.023)}
+.drop:hover,.drop.over{border-color:var(--primary);color:var(--primary);background:rgba(61,220,132,0.039);
+  box-shadow:inset 0 0 30px -12px rgba(61,220,132,0.115)}
+.match-info .league{font-family:var(--display);font-stretch:106%;text-transform:uppercase;letter-spacing:.4px;color:var(--orange)}
+.hcap-box{background:rgba(255,255,255,.018);border-color:#2b2b2b}
+.pred{background:rgba(255,163,48,.06);border-color:rgba(255,163,48,.30)}
+.pred input{background:#101110;border-color:#2d2d2d;color:#fff;font-family:var(--display);font-stretch:88%}
+.pred input:focus{border-color:var(--orange);box-shadow:0 0 0 2px rgba(255,201,77,.22)}
+.pred .lbl{font-family:var(--display);font-stretch:110%}
+
+/* ── panels ── */
+.panel{background:linear-gradient(165deg,#131513 0%,#0e0f0e 100%);border-color:#282828;
+  box-shadow:0 12px 34px -16px rgba(0,0,0,.7)}
+.panel-h{background:linear-gradient(180deg,#141414 0%,#121212 100%);border-bottom-color:#282828;
+  font-family:var(--display);font-stretch:108%;color:var(--orange);letter-spacing:.8px;
+  text-shadow:0 0 14px rgba(255,201,77,.25)}
+
+/* ── tables (diễn biến + transitions) ── */
+table.db th,table.tran th{background:#171717 !important;color:#9a9a9a !important;border-color:#282828 !important;
+  font-family:var(--display);font-stretch:104%;letter-spacing:.5px}
+table.db td,table.tran td{background:#111311 !important;border-color:#242424 !important}
+table.db td.sc{color:var(--primary);text-shadow:0 0 12px rgba(61,220,132,0.157)}
+table.db input[type=text],table.db input.note,table.tran input{background:#101110 !important;border-color:#2a2a2a !important;color:var(--text) !important}
+table.db input[type=text]:focus,table.tran input:focus{border-color:var(--primary) !important;box-shadow:0 0 0 2px rgba(61,220,132,0.086)}
+table.db input[type=text]:disabled{background:#0d0d0d !important;opacity:.9}
+table.db input.note{color:var(--orange) !important}
+tr:hover td{background:#171717 !important}
+
+/* ── bot / note / actions ── */
+.note-panel{background:linear-gradient(165deg,#131513 0%,#0e0f0e 100%);border-color:#282828}
+.actions .btn-sm{font-family:var(--display);font-stretch:104%;text-transform:uppercase;letter-spacing:.4px}
+
+/* ── modals / toast ── */
+.modal-bg{background:rgba(3,8,5,.72);backdrop-filter:blur(5px)}
+.modal{background:linear-gradient(170deg,#141414 0%,#0d0d0d 100%);border:1px solid #2f2f2f;
+  border-radius:12px;box-shadow:0 30px 80px -20px rgba(0,0,0,.85), 0 0 0 1px rgba(61,220,132,0.044)}
+.modal h2,.modal h3{font-family:var(--display);font-stretch:108%;text-transform:uppercase;color:var(--primary)}
+.toast{background:#171717;border:1px solid rgba(255,201,77,.4);color:#ffe3a3;
+  box-shadow:0 10px 30px -8px rgba(0,0,0,.7), 0 0 20px -4px rgba(255,201,77,.25)}
+
+/* ── scrollbar (webkit) ── */
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:#101110}
+::-webkit-scrollbar-thumb{background:#2c2c2c;border-radius:5px;border:2px solid #101110}
+::-webkit-scrollbar-thumb:hover{background:#313131}
+
+/* ── selection ── */
+::selection{background:rgba(61,220,132,0.128);color:#fff}
+
+/* ── nút AI / semantic → palette stadium ── */
+.btn.ai{background:rgba(255,201,77,.10) !important;border-color:rgba(255,201,77,.45) !important;color:#ffd87a !important}
+.btn.ai:hover:not(:disabled){background:rgba(255,201,77,.20) !important;box-shadow:0 0 18px -4px rgba(255,201,77,.45)}
+.btn.run{background:linear-gradient(180deg,#1c1e1c 0%,#121312 100%) !important;border-color:rgba(61,220,132,0.22) !important;color:#f1f2f1 !important;font-family:var(--display);font-stretch:106%;text-transform:uppercase;letter-spacing:.5px}
+.btn.run:hover:not(:disabled){box-shadow:0 0 0 1px rgba(61,220,132,0.157), 0 8px 24px -8px rgba(61,220,132,0.22);transform:translateY(-1px)}
+.btn.save{border-color:rgba(61,220,132,0.178) !important}
+.btn.open{border-color:rgba(255,77,94,.35) !important}
+.ai-card{background:linear-gradient(165deg,#131513 0%,#0e0f0e 100%) !important;border-color:#292929 !important}
+.ai-badge{background:rgba(61,220,132,0.039)}
+
+/* ── final neutral pass v7.1 — khử ám xanh sót ── */
+.drop{background:rgba(255,255,255,.012) !important;border-color:#2c2c2c !important}
+.drop:hover,.drop.over{background:rgba(255,255,255,.03) !important;border-color:var(--primary) !important}
+.match-info{background:rgba(0,0,0,0) !important}
+table.tran tbody td,table.tran tr:nth-child(even){background:#111311 !important}
+table.db td.sc{color:#c9cfc9 !important;text-shadow:none !important}
+
+/* ── final neutral v11.1 — textarea NOTE + vignette ── */
+textarea{background:#101110 !important;border-color:#2b2b2b !important;color:#e0e1e0 !important}
+textarea:focus{border-color:rgba(255,163,48,.5) !important;box-shadow:0 0 0 3px rgba(255,163,48,.12) !important}
+.an-vig{background:radial-gradient(120% 100% at 50% 40%, transparent 55%, rgba(4,4,4,.35) 100%) !important}

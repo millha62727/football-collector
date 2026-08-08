@@ -1,9 +1,10 @@
-<div id="lockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.97);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:12px">
-  <div style="font-size:52px">&#x1F512;</div>
-  <div style="color:#c9d1d9;font-size:18px;font-weight:700">Phi&#xEA;n &#x111;&#xE3; b&#x1ECB; kh&#xF3;a do kh&#xF4;ng ho&#x1EA1;t &#x111;&#x1ED9;ng</div>
-  <div id="lockMsg" style="color:#8b949e;font-size:13px;max-width:360px;text-align:center">B&#x1EA5;m "Xin OTP m&#x1edb;i" &#x111;&#x1EC3; nh&#x1EAD;n m&#xE3; qua Telegram.</div>
-  <button id="lockBtnReq" onclick="lockRequestOtp()" style="padding:10px 28px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#58a6ff;font-size:14px;font-weight:600;cursor:pointer">Xin OTP m&#x1edb;i</button>
-  <input id="lockOtp" type="text" inputmode="numeric" maxlength="6" placeholder="------" disabled style="padding:12px 20px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:22px;letter-spacing:8px;text-align:center;width:240px;outline:none;font-family:'SF Mono','Consolas',monospace" onkeydown="if(event.key==='Enter')lockVerify()">
-  <div id="lockErr" style="color:#f85149;font-size:13px;min-height:18px"></div>
-  <button id="lockBtnVerify" onclick="lockVerify()" disabled style="padding:10px 28px;background:#58a6ff;border:none;border-radius:6px;color:#0d1117;font-size:14px;font-weight:700;cursor:pointer">M&#x1EDF; kh&#xF3;a</button>
+<div id="lockOverlay" class="lock-veil">
+  <div class="lock-card">
+    <div class="lock-icon">🔒</div>
+    <div class="lock-title">Phiên đã khóa</div>
+    <div id="lockMsg" class="lock-sub">Không phát hiện hoạt động — phiên được khóa để bảo vệ. Nhập mật khẩu để mở khóa.</div>
+    <input id="lockPass" type="password" placeholder="Mật khẩu" class="lock-input" autocomplete="current-password" onkeydown="if(event.key==='Enter')lockVerify()">
+    <div id="lockErr" class="lock-err"></div>
+    <button id="lockBtnVerify" class="lock-btn" onclick="lockVerify()">Mở khóa</button>
+  </div>
 </div>

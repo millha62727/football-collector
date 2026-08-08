@@ -78,46 +78,61 @@ async def _run() -> int:
         print("[sweep] nothing to do")
         return 0
 
-    # Resolve the actual LLM call params once per run so the model string we log
-    # matches the one we pass down. resolve_call_params() also picks up the
-    # optional per-scope reasoning_effort override (e.g. AI_REASONING_EFFORT_CRON)
-    # and the AI_EXTRA_BODY escape hatch.
-    from app.analyzer.ai_client import resolve_call_params
-    call_params = resolve_call_params(scope="cron", model=model)
+    # reasoning_effort flows through AI_REASONING_EFFORT env inside ai_client.chat()
+    # (ai_pattern.analyze_match -> ai_client.chat picks it up automatically).
+    # Concurrent workers (PATTERN_SWEEP_WORKERS, default 3) — aiohttp calls are
+    # I/O-bound; the 1.9 GB VPS just waits on HTTP, semaphore keeps AI endpoint
+    # load bounded. Unique(match_id, model) + upsert keeps reruns idempotent.
+    workers = max(1, _int("PATTERN_SWEEP_WORKERS", 3))
+    sem = asyncio.Semaphore(workers)
+    counters = {"ok": 0, "empty": 0, "fail": 0, "done": 0}
+    total = len(matches)
+    c_lock = asyncio.Lock()
 
-    ok = fail = empty = 0
-    for i, m in enumerate(matches, 1):
+    async def _worker(m: dict) -> None:
         mid = m["id"]
         label = f"{m.get('competition','?')[:24]} | {m.get('home','?')} vs {m.get('away','?')}"
-        try:
-            res = await asyncio.wait_for(
-                AIP.analyze_and_store(
-                    mid,
-                    prestigious_only=prestigious,
-                    model=model,
-                    reasoning_effort=call_params["reasoning_effort"],
-                ),
-                timeout=per_call_to,
-            )
-            if res.get("parse_ok"):
-                ok += 1
-                print(f"[sweep] {i}/{len(matches)} OK   {label} "
-                      f"tags={res.get('tags')} conf={res.get('confidence')}")
-            else:
-                empty += 1
-                print(f"[sweep] {i}/{len(matches)} EMPTY {label} "
-                      f"finish={res.get('finish_reason')} len={res.get('content_len')}",
-                      file=sys.stderr)
-        except asyncio.TimeoutError:
-            fail += 1
-            print(f"[sweep] {i}/{len(matches)} TIMEOUT {label}", file=sys.stderr)
-        except Exception as exc:
-            fail += 1
-            print(f"[sweep] {i}/{len(matches)} FAIL {label}: {exc!r}", file=sys.stderr)
-        if i < len(matches) and delay:
-            await asyncio.sleep(delay)
+        async with sem:
+            try:
+                res = await asyncio.wait_for(
+                    AIP.analyze_and_store(
+                        mid,
+                        prestigious_only=prestigious,
+                        model=model,
+                    ),
+                    timeout=per_call_to,
+                )
+                async with c_lock:
+                    counters["done"] += 1
+                    n = counters["done"]
+                    if res.get("parse_ok"):
+                        counters["ok"] += 1
+                        print(f"[sweep] {n}/{total} OK   {label} "
+                              f"tags={res.get('tags')} conf={res.get('confidence')}", flush=True)
+                    else:
+                        counters["empty"] += 1
+                        print(f"[sweep] {n}/{total} EMPTY {label} "
+                              f"finish={res.get('finish_reason')} len={res.get('content_len')}",
+                              file=sys.stderr, flush=True)
+            except asyncio.TimeoutError:
+                async with c_lock:
+                    counters["done"] += 1
+                    counters["fail"] += 1
+                    print(f"[sweep] {counters['done']}/{total} TIMEOUT {label}",
+                          file=sys.stderr, flush=True)
+            except Exception as exc:
+                async with c_lock:
+                    counters["done"] += 1
+                    counters["fail"] += 1
+                    print(f"[sweep] {counters['done']}/{total} FAIL {label}: {exc!r}",
+                          file=sys.stderr, flush=True)
+            if delay:
+                await asyncio.sleep(delay)
 
-    print(f"[sweep] done: ok={ok} empty={empty} fail={fail} of {len(matches)}")
+    await asyncio.gather(*(_worker(m) for m in matches))
+
+    print(f"[sweep] done: ok={counters['ok']} empty={counters['empty']} "
+          f"fail={counters['fail']} of {total}", flush=True)
     return 0
 
 

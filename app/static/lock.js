@@ -1,18 +1,14 @@
-// lock.js — session lock (idle-timeout) + Telegram-delivered unlock OTP.
-// Included on protected pages. Requires the lock overlay HTML to be present
-// with these IDs: lockOverlay, lockOtp, lockErr, lockMsg, lockBtnReq, lockBtnVerify.
+// lock.js — session lock (idle-timeout) + password unlock.
+// Included on protected pages.
 
 (function () {
-  // ── Disguise (redirect to /market) ──────────────────────────────────────
   window.goDisguise = function () {
     window.location.href = '/market';
   };
 
-  // ── Idle-lock config (fallback 5 min, overridden by /api/lock/config) ───
   let LOCK_TIMEOUT_MS = 5 * 60 * 1000;
   const LOCK_KEY = 'fbc_locked';
   let _lockTimer = null;
-  let _otpRequested = false;
   const _debugLock = (() => {
     try { return new URL(window.location.href).searchParams.get('debugLock') === '1'; }
     catch (e) { return false; }
@@ -20,8 +16,6 @@
 
   function $(id) { return document.getElementById(id); }
 
-  // Exposed on `window` so callers (e.g. the Telegram Settings modal — Yêu cầu #12)
-  // can force re-auth after a privileged save.
   window.showLock = function showLock() {
     sessionStorage.setItem(LOCK_KEY, '1');
     const el = $('lockOverlay');
@@ -30,15 +24,12 @@
     el.style.alignItems = 'center';
     el.style.justifyContent = 'center';
     el.style.flexDirection = 'column';
-    _otpRequested = false;
-    const otp = $('lockOtp');
-    if (otp) { otp.value = ''; otp.disabled = true; }
+    const pass = $('lockPass');
+    if (pass) { pass.value = ''; pass.disabled = false; pass.focus(); }
     const err = $('lockErr'); if (err) err.textContent = '';
-    const msg = $('lockMsg'); if (msg) msg.textContent = 'Bấm "Xin OTP mới" để nhận mã qua Telegram.';
-    const btnReq = $('lockBtnReq');    if (btnReq) { btnReq.disabled = false; btnReq.textContent = 'Xin OTP mới'; }
-    const btnVer = $('lockBtnVerify'); if (btnVer) btnVer.disabled = true;
+    const msg = $('lockMsg'); if (msg) msg.textContent = 'Nhap mat khau de mo khoa.';
+    const btnVer = $('lockBtnVerify'); if (btnVer) { btnVer.disabled = false; btnVer.textContent = 'Mo khoa'; }
   };
-  // Internal alias kept for clarity within this IIFE.
   const showLock = window.showLock;
 
   function hideLock() {
@@ -52,16 +43,10 @@
   function _doReset() {
     clearTimeout(_lockTimer);
     _lockTimer = setTimeout(showLock, LOCK_TIMEOUT_MS);
-    if (_debugLock) {
-      console.log('[lock] reset @', new Date().toLocaleTimeString(),
-        '→ next lock @', new Date(Date.now() + LOCK_TIMEOUT_MS).toLocaleTimeString());
-    }
   }
   function resetTimer() {
-    if (sessionStorage.getItem(LOCK_KEY)) return; // already locked, no reset
+    if (sessionStorage.getItem(LOCK_KEY)) return;
     const now = Date.now();
-    // Throttle ~250ms to absorb mousemove storms, but schedule a trailing call
-    // so the final activity in a burst still counts.
     if (now - _lastReset < 250) {
       if (!_trailingPending) {
         _trailingPending = true;
@@ -78,59 +63,26 @@
     _doReset();
   }
 
-  window.lockRequestOtp = async function () {
-    const btnReq = $('lockBtnReq');
-    const err = $('lockErr');
-    const msg = $('lockMsg');
-    const otp = $('lockOtp');
-    const btnVer = $('lockBtnVerify');
-    if (err) err.textContent = '';
-    if (btnReq) { btnReq.disabled = true; btnReq.textContent = 'Đang gửi...'; }
-    try {
-      const r = await fetch('/api/lock/request-otp', { method: 'POST' });
-      if (r.status === 401) { location.href = '/login'; return; }
-      const j = await r.json();
-      if (!r.ok || !j.ok) {
-        if (err) err.textContent = j.error || 'Không gửi được OTP';
-        if (btnReq) { btnReq.disabled = false; btnReq.textContent = 'Xin OTP mới'; }
-        return;
-      }
-      _otpRequested = true;
-      if (msg) msg.textContent = 'OTP đã gửi qua Telegram. Hết hạn sau ' + Math.round((j.ttl_seconds||300)/60) + ' phút.';
-      if (otp) { otp.disabled = false; otp.focus(); }
-      if (btnVer) btnVer.disabled = false;
-      if (btnReq) { btnReq.disabled = false; btnReq.textContent = 'Gửi lại OTP'; }
-    } catch (e) {
-      if (err) err.textContent = 'Lỗi kết nối';
-      if (btnReq) { btnReq.disabled = false; btnReq.textContent = 'Xin OTP mới'; }
-    }
-  };
-
   window.lockVerify = async function () {
-    const otp = $('lockOtp');
+    const pass = $('lockPass');
     const err = $('lockErr');
     const btnVer = $('lockBtnVerify');
-    if (!otp) return;
-    if (!_otpRequested) {
-      if (err) err.textContent = 'Hãy bấm "Xin OTP mới" trước.';
-      return;
-    }
-    const code = (otp.value || '').trim();
-    if (!code) { if (err) err.textContent = 'Nhập OTP'; return; }
-    if (btnVer) btnVer.disabled = true;
+    if (!pass) return;
+    const pwd = (pass.value || '').trim();
+    if (!pwd) { if (err) err.textContent = 'Nhap mat khau'; return; }
+    if (btnVer) { btnVer.disabled = true; btnVer.textContent = 'Dang kiem tra...'; }
     if (err) err.textContent = '';
     try {
-      const r = await fetch('/api/lock/verify-otp', {
+      const r = await fetch('/api/lock/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ otp: code }),
+        body: JSON.stringify({ password: pwd }),
       });
       if (r.status === 401) {
-        const j = await r.json().catch(() => ({}));
-        if (err) err.textContent = j.error || 'OTP không đúng';
-        otp.value = '';
-        otp.focus();
-        if (btnVer) btnVer.disabled = false;
+        if (err) err.textContent = 'Sai mat khau';
+        pass.value = '';
+        pass.focus();
+        if (btnVer) { btnVer.disabled = false; btnVer.textContent = 'Mo khoa'; }
         return;
       }
       const j = await r.json();
@@ -138,23 +90,22 @@
         hideLock();
         resetTimer();
       } else {
-        if (err) err.textContent = j.error || 'OTP không đúng';
-        otp.value = '';
-        otp.focus();
-        if (btnVer) btnVer.disabled = false;
+        if (err) err.textContent = j.error || 'Sai mat khau';
+        pass.value = '';
+        pass.focus();
+        if (btnVer) { btnVer.disabled = false; btnVer.textContent = 'Mo khoa'; }
       }
     } catch (e) {
-      if (err) err.textContent = 'Lỗi kết nối';
-      if (btnVer) btnVer.disabled = false;
+      if (err) err.textContent = 'Loi ket noi';
+      if (btnVer) { btnVer.disabled = false; btnVer.textContent = 'Mo khoa'; }
     }
   };
 
-  // Pull idle timeout from server (.env-driven), then start the timer.
   fetch('/api/lock/config').then(r => r.ok ? r.json() : null).then(cfg => {
     if (cfg && cfg.idle_seconds) {
       LOCK_TIMEOUT_MS = Math.max(60, cfg.idle_seconds) * 1000;
     }
-    clearTimeout(_lockTimer); // dọn timer cũ nếu activity đã set trong lúc fetch
+    clearTimeout(_lockTimer);
     if (sessionStorage.getItem(LOCK_KEY)) showLock();
     else _doReset();
   }).catch(() => {
@@ -163,8 +114,6 @@
     else _doReset();
   });
 
-  // Activity resets the timer.
-  // capture: true → nhận event TRƯỚC khi descendant gọi stopPropagation() (modal, input).
   const ACTIVITY_EVENTS = [
     'mousemove', 'mousedown', 'pointermove', 'pointerdown',
     'keydown', 'keyup', 'click',

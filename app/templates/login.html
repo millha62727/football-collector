@@ -3,127 +3,196 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Football Dashboard — Login</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%BD%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#090a09">
+<title>Sign In — Football Ops</title>
+<link rel="stylesheet" href="/static/fonts.css?v=44" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="/static/fonts.css?v=44"></noscript>
 <style>
-:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--primary:#58a6ff;--danger:#f85149;--text:#c9d1d9;--muted:#8b949e;--green:#3fb950;--r:6px}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:40px;width:100%;max-width:400px}
-.logo{text-align:center;font-size:52px;margin-bottom:12px}
-h1{text-align:center;font-size:22px;font-weight:700;margin-bottom:4px}
-.sub{text-align:center;color:var(--muted);font-size:13px;margin-bottom:28px}
-label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin-bottom:6px}
-input{width:100%;padding:10px 14px;background:#0d1117;border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:14px;margin-bottom:16px;transition:border-color .15s}
-input:focus{outline:none;border-color:var(--primary)}
-input.otp{text-align:center;font-size:22px;letter-spacing:8px;font-family:'SF Mono','Consolas',monospace}
-button{width:100%;padding:11px;background:var(--primary);border:none;border-radius:var(--r);color:#0d1117;font-size:14px;font-weight:700;cursor:pointer;margin-top:4px;transition:background .15s}
-button:hover{background:#79c0ff}
-button:disabled{opacity:.5;cursor:not-allowed}
-button.link{background:transparent;color:var(--muted);font-weight:400;font-size:12px;text-decoration:underline;padding:6px;margin-top:8px}
-button.link:hover{background:transparent;color:var(--primary)}
-.err{background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);border-radius:var(--r);padding:10px 14px;color:var(--danger);font-size:13px;margin-bottom:16px}
-.ok{background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);border-radius:var(--r);padding:10px 14px;color:var(--green);font-size:13px;margin-bottom:16px}
-.muted{color:var(--muted);font-size:12px;margin-bottom:12px}
-.muted b{color:var(--text)}
-.hidden{display:none}
+:root{
+  --bg0:#090a09;--surface:#121312;--card:#141514;--line:#1d1f1d;--line2:#262826;
+  --text:#dce7df;--muted:#94a19a;--faint:#6e7e74;
+  --turf:#3ddc84;--turf-glow:rgba(61,220,132,0.077);
+  --gold:#ffc94d;--red:#ff4d5e;
+  --display:'Archivo','Oswald',Impact,sans-serif;
+  --body:'IBM Plex Sans',-apple-system,'Segoe UI',sans-serif;
+  --mono:'IBM Plex Mono','Consolas',monospace;
+}
+html,body{height:100%}
+body{font-family:var(--body);background:var(--bg0);color:var(--text);
+  display:flex;align-items:center;justify-content:center;min-height:100vh;
+  -webkit-font-smoothing:antialiased;position:relative;overflow:hidden}
+/* stadium-night backdrop: twin floodlights + pitch vignette */
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(1100px 520px at 12% -8%, rgba(61,220,132,.05), transparent 62%),
+    radial-gradient(950px 480px at 88% -8%, rgba(255,201,77,.055), transparent 60%),
+    radial-gradient(130% 100% at 50% 30%, transparent 58%, rgba(4,4,4,.55) 100%),
+    linear-gradient(180deg,#0c1410 0%, var(--bg0) 42%, #060b08 100%)}
+body::after{content:'';position:fixed;left:50%;bottom:-46vmin;width:92vmin;height:92vmin;
+  transform:translateX(-50%);z-index:0;pointer-events:none;
+  border:1.5px solid rgba(61,220,132,.04);border-radius:50%;
+  box-shadow:inset 0 0 0 60px rgba(61,220,132,.016)}
+
+.card{position:relative;z-index:1;width:100%;max-width:380px;
+  background:linear-gradient(170deg,var(--card) 0%,var(--surface) 100%);
+  border:1px solid var(--line2);border-radius:16px;padding:34px 30px 30px;
+  box-shadow:0 30px 80px -24px rgba(0,0,0,.85),0 0 60px -30px var(--turf-glow);
+  animation:rise .5s cubic-bezier(.2,.7,.3,1) both}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.card::before{content:'';position:absolute;left:24px;right:24px;top:0;height:2px;border-radius:2px;
+  background:linear-gradient(90deg,var(--turf),var(--gold),transparent);opacity:.7}
+
+.brand{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:24px}
+.brand-mark{width:52px;height:52px;border-radius:14px;display:grid;place-items:center;font-size:26px;
+  background:linear-gradient(145deg,#1d1e1d,#111211);border:1px solid var(--line2);
+  box-shadow:0 0 28px -6px var(--turf-glow),inset 0 1px 0 rgba(255,255,255,.06)}
+.brand-name{font-family:var(--display);font-stretch:118%;font-size:19px;font-weight:650;
+  letter-spacing:2.4px;text-transform:uppercase}
+.brand-name b{color:var(--turf);font-weight:600}
+.brand-sub{font-size:10.5px;color:var(--faint);letter-spacing:2.2px;text-transform:uppercase;font-weight:600}
+
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:3px;background:var(--bg0);
+  border:1px solid var(--line);border-radius:10px;padding:3px;margin-bottom:20px}
+.tab{padding:8px 0;text-align:center;font-size:11px;font-weight:700;letter-spacing:1.4px;
+  text-transform:uppercase;font-family:var(--display);font-stretch:108%;
+  color:var(--faint);border-radius:7px;cursor:pointer;transition:color .15s,background .15s;user-select:none}
+.tab:hover{color:var(--muted)}
+.tab.active{background:var(--line2);color:var(--text);box-shadow:inset 0 0 0 1px rgba(61,220,132,.08)}
+
+.pane{display:none}
+.pane.active{display:block;animation:rise .3s ease}
+
+.field{margin-bottom:15px}
+.field label{display:block;font-size:10px;font-weight:700;color:var(--faint);
+  letter-spacing:1.6px;text-transform:uppercase;margin-bottom:7px;font-family:var(--display);font-stretch:110%}
+.field input{width:100%;padding:12px 14px;background:var(--bg0);border:1px solid var(--line);
+  border-radius:9px;color:var(--text);font-size:14px;font-family:var(--body);
+  transition:border-color .15s,box-shadow .15s}
+.field input:focus{outline:none;border-color:var(--turf);box-shadow:0 0 0 3px var(--turf-glow)}
+#otpInput{font-family:var(--mono);font-size:21px;letter-spacing:9px;text-align:center}
+#otpInput::placeholder{letter-spacing:3px;font-size:13px;color:var(--faint)}
+
+.btn{width:100%;padding:12px;border:none;border-radius:9px;cursor:pointer;
+  font-family:var(--display);font-stretch:112%;font-size:13.5px;font-weight:700;letter-spacing:1.6px;
+  text-transform:uppercase;transition:transform .15s,box-shadow .2s,background .15s;
+  background:linear-gradient(145deg,#1e8a55,#135c38);color:#05130b;
+  box-shadow:0 10px 26px -10px rgba(61,220,132,.3)}
+.btn:hover:not(:disabled){transform:translateY(-1px);background:linear-gradient(145deg,#3ddc84,#23a262);
+  box-shadow:0 12px 30px -10px rgba(61,220,132,.4)}
+.btn:active:not(:disabled){transform:translateY(0)}
+.btn:disabled{opacity:.4;cursor:default;transform:none;box-shadow:none}
+.btn-ghost{background:transparent;border:1px solid var(--line2);color:var(--muted);box-shadow:none}
+.btn-ghost:hover:not(:disabled){border-color:var(--turf);color:var(--turf);background:rgba(61,220,132,.05);box-shadow:none}
+.hint{font-size:10.5px;color:var(--faint);text-align:center;margin-top:10px;line-height:1.5}
+
+.err{display:none;margin-top:13px;background:rgba(255,77,94,.07);border:1px solid rgba(255,77,94,.28);
+  border-radius:9px;padding:10px 13px;color:#ffb9c0;font-size:12px;line-height:1.45;
+  animation:rise .2s}
+.err.show{display:block}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001s!important;transition-duration:.001s!important}}
 </style>
 </head>
 <body>
 <div class="card">
-  <div class="logo">&#x26BD;</div>
-  <h1>Football Dashboard</h1>
-  <p class="sub">Đăng nhập bằng OTP qua Telegram</p>
-  <div id="msg"></div>
-
-  <!-- Step 1: enter username, request OTP -->
-  <div id="step1">
-    <label for="u">Tên đăng nhập</label>
-    <input type="text" id="u" placeholder="admin" autofocus autocomplete="username" onkeydown="if(event.key==='Enter')requestOtp()">
-    <button id="btnReq" onclick="requestOtp()">Gửi OTP qua Telegram</button>
+  <div class="brand">
+    <div class="brand-mark">⚽</div>
+    <div class="brand-name">Foot<b>ball</b>&nbsp;Ops</div>
+    <div class="brand-sub">Broadcast Studio</div>
+  </div>
+  <div class="tabs">
+    <div class="tab active" id="tabPw" onclick="switchTab('pw')">Mật khẩu</div>
+    <div class="tab" id="tabOtp" onclick="switchTab('otp')">OTP</div>
   </div>
 
-  <!-- Step 2: enter OTP -->
-  <div id="step2" class="hidden">
-    <div class="muted">Tài khoản: <b id="uShow"></b><br>OTP đã được gửi đến Telegram. Hết hạn sau <b id="ttl">5</b> phút.</div>
-    <label for="otp">Mã OTP</label>
-    <input type="text" id="otp" class="otp" inputmode="numeric" maxlength="6" placeholder="------" autocomplete="one-time-code" onkeydown="if(event.key==='Enter')verifyOtp()">
-    <button id="btnVerify" onclick="verifyOtp()">Đăng nhập</button>
-    <button class="link" onclick="resetStep()">Quay lại</button>
-    <button class="link" onclick="requestOtp(true)">Gửi lại OTP</button>
-  </div>
+  <form id="formPw" class="pane active" onsubmit="return doLogin(event)">
+    <div class="field">
+      <label for="pwUser">User</label>
+      <input type="text" id="pwUser" name="username" autocomplete="username" autofocus required>
+    </div>
+    <div class="field">
+      <label for="pwPass">Pass</label>
+      <input type="password" id="pwPass" name="password" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="btn" id="pwBtn">Sign in</button>
+  </form>
+
+  <form id="formOtp" class="pane" onsubmit="return verifyOtp(event)">
+    <div class="field">
+      <label for="otpUser">User</label>
+      <input type="text" id="otpUser" name="username" autocomplete="username" required>
+    </div>
+    <button type="button" class="btn btn-ghost" id="btnReqOtp" onclick="requestOtp()">Gửi mã</button>
+    <div class="field" style="margin-top:14px">
+      <label for="otpInput">OTP</label>
+      <input type="text" id="otpInput" name="otp" inputmode="numeric" maxlength="6" pattern="[0-9]*"
+             placeholder="------" autocomplete="one-time-code" disabled>
+    </div>
+    <button type="submit" class="btn" id="otpBtn" disabled>Xác thực</button>
+  </form>
+
+  <div class="err" id="loginErr" role="alert"></div>
 </div>
 
 <script>
-const $ = id => document.getElementById(id);
-function showMsg(html, cls){ $('msg').innerHTML = html ? '<div class="'+cls+'">'+html+'</div>' : ''; }
-function escHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-
-async function requestOtp(isResend){
-  const u = $('u').value.trim();
-  if (!u) { showMsg('Nhập tên đăng nhập', 'err'); $('u').focus(); return; }
-  showMsg('Đang gửi OTP...', 'ok');
-  $('btnReq').disabled = true;
-  try {
-    const r = await fetch('/api/auth/request-otp', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({username: u})
-    });
-    const j = await r.json();
-    if (!r.ok || !j.ok) {
-      showMsg(escHtml(j.error || 'Không gửi được OTP'), 'err');
-      $('btnReq').disabled = false;
-      return;
-    }
-    $('uShow').textContent = u;
-    $('ttl').textContent = Math.max(1, Math.round((j.ttl_seconds||300)/60));
-    $('step1').classList.add('hidden');
-    $('step2').classList.remove('hidden');
-    showMsg(isResend ? 'Đã gửi lại OTP' : 'OTP đã được gửi qua Telegram', 'ok');
-    setTimeout(() => $('otp').focus(), 50);
-  } catch(e) {
-    showMsg('Lỗi kết nối: ' + escHtml(e.message||e), 'err');
-    $('btnReq').disabled = false;
-  }
+const $=(id)=>document.getElementById(id);
+function showErr(m){const e=$('loginErr');e.textContent=m;e.classList.add('show')}
+function clearErr(){$('loginErr').classList.remove('show')}
+function switchTab(w){
+  clearErr();
+  $('tabPw').classList.toggle('active',w==='pw');
+  $('tabOtp').classList.toggle('active',w==='otp');
+  $('formPw').classList.toggle('active',w==='pw');
+  $('formOtp').classList.toggle('active',w==='otp');
 }
-
-async function verifyOtp(){
-  const u = $('u').value.trim();
-  const code = $('otp').value.trim();
-  if (!code) { showMsg('Nhập OTP', 'err'); return; }
-  $('btnVerify').disabled = true;
-  showMsg('Đang xác thực...', 'ok');
-  try {
-    const r = await fetch('/api/auth/verify-otp', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({username: u, otp: code})
-    });
-    const j = await r.json();
-    if (!r.ok || !j.ok) {
-      showMsg(escHtml(j.error || 'OTP không đúng hoặc đã hết hạn'), 'err');
-      $('otp').value = '';
-      $('otp').focus();
-      $('btnVerify').disabled = false;
-      return;
-    }
-    showMsg('Đăng nhập thành công, đang chuyển...', 'ok');
-    location.href = '/';
-  } catch(e) {
-    showMsg('Lỗi kết nối: ' + escHtml(e.message||e), 'err');
-    $('btnVerify').disabled = false;
-  }
+async function doLogin(ev){
+  ev.preventDefault();clearErr();
+  const b=$('pwBtn');b.disabled=true;b.textContent='...';
+  try{
+    const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username:$('pwUser').value.trim(),password:$('pwPass').value})});
+    if(r.ok){window.location.href='/';return false}
+    let m='Invalid credentials';try{m=(await r.json()).error||m}catch(_){}
+    showErr(m);
+  }catch(e){showErr('Connection error')}
+  finally{b.disabled=false;b.textContent='Sign in'}
+  return false;
 }
-
-function resetStep(){
-  $('step2').classList.add('hidden');
-  $('step1').classList.remove('hidden');
-  $('btnReq').disabled = false;
-  $('btnVerify').disabled = false;
-  $('otp').value = '';
-  showMsg('', '');
-  $('u').focus();
+async function requestOtp(){
+  clearErr();const u=$('otpUser').value.trim();
+  if(!u){showErr('Enter username first.');return}
+  const b=$('btnReqOtp');b.disabled=true;b.textContent='...';
+  try{
+    const r=await fetch('/api/auth/request-otp',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username:u})});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j.ok){showErr(j.error||'Failed.');return}
+    $('otpInput').disabled=false;$('otpBtn').disabled=false;$('otpInput').focus();
+    b.textContent='Resend';
+  }catch(e){showErr('Connection error')}
+  finally{b.disabled=false}
 }
+async function verifyOtp(ev){
+  ev.preventDefault();clearErr();
+  const o=$('otpInput').value.trim();
+  if(o.length!==6){showErr('OTP must be 6 digits.');return}
+  const b=$('otpBtn');b.disabled=true;b.textContent='...';
+  try{
+    const r=await fetch('/api/auth/verify-otp',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({username:$('otpUser').value.trim(),otp:o})});
+    if(r.ok){window.location.href='/';return false}
+    let m='Invalid or expired OTP.';try{m=(await r.json()).error||m}catch(_){}
+    showErr(m);$('otpInput').value='';$('otpInput').focus();
+  }catch(e){showErr('Connection error')}
+  finally{b.disabled=false;b.textContent='Xác thực'}
+  return false;
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  const u=new URLSearchParams(location.search).get('u');
+  if(u){$('pwUser').value=u;$('otpUser').value=u}
+  $('pwUser').focus();
+});
 </script>
 </body>
 </html>

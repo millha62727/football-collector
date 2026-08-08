@@ -3,165 +3,134 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Data Browser &#x2014; Football Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%BD%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#090a09">
+<title>Data Browser &#x2014; Football Ops</title>
+<link rel="stylesheet" href="/static/fonts.css?v=44" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="/static/fonts.css?v=44"></noscript>
+<link rel="stylesheet" href="/static/theme.css?v=44">
 <style>
-:root{--bg:#0d1117;--surface:#161b22;--card:#21262d;--border:#30363d;--primary:#58a6ff;--pdim:#1f3a5f;--red:#f85149;--green:#3fb950;--orange:#d29922;--purple:#bc8cff;--text:#c9d1d9;--muted:#8b949e;--r:6px;--font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
-.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10000}
-.hdr-logo{font-size:16px;font-weight:700;color:var(--primary)}
-.hdr a{color:var(--muted);text-decoration:none;font-size:13px}
-.hdr a:hover{color:var(--primary)}
-.hdr-spacer{flex:1}
-.btn-sm{padding:5px 12px;border-radius:var(--r);border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-size:12px;transition:all .15s;text-decoration:none;display:inline-block}
-.btn-sm:hover{border-color:var(--primary);color:var(--primary)}
-.main{flex:1;display:flex;gap:0}
-.sidebar{width:340px;min-width:280px;border-right:1px solid var(--border);display:flex;flex-direction:column;height:calc(100vh - 45px);position:sticky;top:45px;overflow:hidden}
-.search-panel{padding:12px;border-bottom:1px solid var(--border)}
-.sinput{width:100%;padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:12px;margin-bottom:6px}
-.sinput:focus{outline:none;border-color:var(--primary)}
-.sflex{display:flex;gap:6px}
-.slist{flex:1;overflow-y:auto}
-.smatch{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s;font-size:12px}
-.smatch:hover{background:rgba(88,166,255,.05)}
-.smatch.sel{background:var(--pdim);border-left:3px solid var(--primary)}
-.smatch.cmp{background:rgba(63,185,80,.08);border-left:3px solid var(--green)}
-.smatch-teams{font-weight:700;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.smatch-meta{color:var(--muted);font-size:11px;display:flex;gap:8px}
-.smatch-score{color:var(--red);font-weight:700}
-.smatch-empty{color:var(--muted);text-align:center;padding:24px;font-size:12px}
-.content{flex:1;display:flex;flex-direction:column;padding:0;height:calc(100vh - 45px);min-width:0}
-#contentArea{flex:1;overflow-y:auto;padding:16px;min-height:0}
-.badge{display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700}
-.b-live{background:rgba(248,81,73,.2);color:var(--red);border:1px solid rgba(248,81,73,.35)}
-.b-ft{background:rgba(63,185,80,.2);color:var(--green);border:1px solid rgba(63,185,80,.35)}
-.b-ht{background:rgba(188,140,255,.2);color:var(--purple);border:1px solid rgba(188,140,255,.35)}
-.b-up{background:rgba(210,153,34,.2);color:var(--orange);border:1px solid rgba(210,153,34,.35)}
-.b-x{background:rgba(139,148,158,.15);color:var(--muted);border:1px solid var(--border)}
-.split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:14px}
-.panel-h{padding:8px 12px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--primary);display:flex;align-items:center;gap:8px}
+/* ---- layout shell ---- */
+.db-main{flex:1;display:flex;gap:0;min-height:0}
+.sidebar{width:350px;min-width:290px;border-right:1px solid var(--line);display:flex;flex-direction:column;
+  height:calc(100vh - 58px);position:sticky;top:58px;overflow:hidden;background:rgba(16,26,20,.5)}
+.search-panel{padding:14px;border-bottom:1px solid var(--line)}
+.sinput{width:100%;padding:8px 11px;font-size:12px;margin-bottom:7px}
+.sflex{display:flex;gap:7px}
+.slist{flex:1;overflow-y:auto;padding:6px}
+.smatch{padding:11px 13px;border:1px solid transparent;border-radius:10px;cursor:pointer;margin-bottom:5px;
+  font-size:12px;transition:background .12s,border-color .12s,transform .12s;background:rgba(20,32,24,.45)}
+.smatch:hover{background:rgba(61,220,132,.06);border-color:var(--line);transform:translateX(2px)}
+.smatch.sel{background:var(--pdim);border-color:rgba(61,220,132,.55);box-shadow:inset 3px 0 0 var(--turf)}
+.smatch.cmp{background:rgba(61,220,132,.07);border-color:rgba(61,220,132,.35);box-shadow:inset 3px 0 0 var(--turf)}
+.smatch-teams{font-weight:700;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.2px}
+.smatch-meta{color:var(--muted);font-size:11px;display:flex;gap:9px;align-items:center}
+.smatch-score{color:var(--red);font-weight:700;font-family:var(--mono)}
+.smatch-empty{color:var(--faint);text-align:center;padding:28px;font-size:12px}
+.content{flex:1;display:flex;flex-direction:column;padding:0;height:calc(100vh - 58px);min-width:0}
+#contentArea{flex:1;overflow-y:auto;padding:18px;min-height:0}
+
+.split{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-bottom:14px;box-shadow:var(--shadow)}
+.panel-h{padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--line);font-size:12.5px;
+  font-weight:700;color:var(--turf);display:flex;align-items:center;gap:8px;letter-spacing:.3px}
 .panel-b{padding:0;overflow-x:auto}
-table.ot{width:100%;border-collapse:collapse;font-size:11px;min-width:500px}
-table.ot th{padding:7px 8px;background:var(--surface);color:var(--muted);font-weight:600;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;white-space:nowrap;text-align:center}
-table.ot td{padding:6px 8px;border-bottom:1px solid #1a1f26;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums}
-table.ot tr:last-child td{border-bottom:none}
-table.ot tr:hover td{background:rgba(255,255,255,.02)}
-.diff-up{color:var(--green)}.diff-down{color:var(--red)}
-.actions-bar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
-.btn{padding:6px 14px;border-radius:var(--r);border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:12px;font-weight:600;transition:all .15s}
-.btn:hover{border-color:var(--primary);color:var(--primary)}
-.btn-green{border-color:var(--green);color:var(--green);background:rgba(63,185,80,.1)}
-.btn-green:hover{background:var(--green);color:#000}
-.empty{color:var(--muted);text-align:center;padding:48px;font-size:13px}
-.toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:10px 16px;font-size:12px;display:none;z-index:200}
 
-/* ---- Advanced search panel — đặt ở content area, grid 4 ô/hàng ---- */
-.adv-panel{flex-shrink:0;padding:10px 16px;border-bottom:1px solid var(--border);background:rgba(88,166,255,.03)}
-.adv-toggle{display:flex;align-items:center;cursor:pointer;font-size:12px;font-weight:600;color:var(--primary);user-select:none}
-.adv-toggle::before{content:'▶';margin-right:6px;transition:transform .15s;display:inline-block}
+.actions-bar{display:flex;gap:9px;margin-bottom:13px;flex-wrap:wrap;align-items:center}
+
+/* ---- advanced search panel ---- */
+.adv-panel{flex-shrink:0;padding:12px 18px;border-bottom:1px solid var(--line);background:rgba(61,220,132,.03)}
+.adv-toggle{display:flex;align-items:center;cursor:pointer;font-size:12px;font-weight:700;color:var(--turf);
+  user-select:none;letter-spacing:.5px;text-transform:uppercase}
+.adv-toggle::before{content:'▶';margin-right:8px;transition:transform .18s;display:inline-block;font-size:10px}
 .adv-panel[data-open] .adv-toggle::before{transform:rotate(90deg)}
-.adv-body{display:none;margin-top:10px}
+.adv-body{display:none;margin-top:12px;animation:fadeUp .3s both}
 .adv-panel[data-open] .adv-body{display:block}
-.adv-opening{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
-.adv-twocol{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.adv-col{background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:var(--r);padding:8px 10px}
-.adv-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-.adv-cell{display:flex;flex-direction:column;gap:2px;min-width:0}
+.adv-opening{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.adv-twocol{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.adv-col{background:rgba(11,19,14,.6);border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 12px}
+.adv-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.adv-cell{display:flex;flex-direction:column;gap:3px;min-width:0}
 .adv-cell label{font-size:11px;color:var(--muted)}
-.adv-cell input{padding:5px 8px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:12px;width:100%}
-.adv-cell input:focus{outline:none;border-color:var(--primary)}
-.adv-sub{margin:6px 0 6px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
-.adv-actions{display:flex;gap:6px;margin-top:10px;justify-content:flex-end}
-.adv-actions button{padding:6px 16px}
+.adv-cell input{padding:6px 9px;font-size:12px;width:100%}
+.adv-sub{margin:6px 0 8px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:700}
+.adv-actions{display:flex;gap:8px;margin-top:12px;justify-content:flex-end}
 
-/* ---- Sortable result table ---- */
-.rtable{width:100%;border-collapse:collapse;font-size:11px;background:var(--card)}
-.rtable th{padding:8px 10px;background:var(--surface);text-align:left;font-size:10px;text-transform:uppercase;color:var(--muted);cursor:pointer;user-select:none;border-bottom:1px solid var(--border)}
-.rtable th:hover{color:var(--primary)}
-.rtable th .sortar{font-size:9px;margin-left:4px;opacity:.5}
-.rtable th.sort-asc .sortar,.rtable th.sort-desc .sortar{opacity:1;color:var(--primary)}
-.rtable td{padding:7px 10px;border-bottom:1px solid #1a1f26;white-space:nowrap}
-.rtable tr.expanded{background:rgba(88,166,255,.04)}
-.rtable tr.row-prio-1{background:linear-gradient(90deg,rgba(210,153,34,.12),transparent)}
-.rtable tr.row-prio-2{background:linear-gradient(90deg,rgba(248,81,73,.10),transparent)}
-.rtable tr.row-prio-3{background:linear-gradient(90deg,rgba(63,185,80,.10),transparent)}
-.rtable tr.row-prio-4{background:linear-gradient(90deg,rgba(88,166,255,.08),transparent)}
-.rtable tr.row-clickable{cursor:pointer}
-.rtable tr.row-clickable:hover td{background:rgba(255,255,255,.03)}
-.results-bar{display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);font-size:12px;color:var(--muted)}
+/* ---- results ---- */
+.results-bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:10px 14px;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r);font-size:12px;color:var(--muted)}
 .results-bar b{color:var(--text)}
 .results-bar .spacer{flex:1}
 
-/* ---- Scroll-sync toggle (Yêu cầu #10) ---- */
-.scroll-toggle{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--card);border:1px solid var(--border);border-radius:14px;font-size:11px;cursor:pointer;user-select:none}
-.scroll-toggle .dot{width:16px;height:16px;border-radius:50%;background:var(--border);transition:all .15s;position:relative}
-.scroll-toggle.on .dot{background:var(--primary)}
-.split-pane{max-height:calc(100vh - 200px);overflow-y:auto}
+.scroll-toggle{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;background:var(--card);
+  border:1px solid var(--line);border-radius:999px;font-size:11px;font-weight:600;cursor:pointer;
+  user-select:none;transition:border-color .15s}
+.scroll-toggle:hover{border-color:var(--line2)}
+.scroll-toggle .dot{width:16px;height:16px;border-radius:50%;background:var(--line2);transition:all .18s}
+.scroll-toggle.on .dot{background:var(--turf);box-shadow:0 0 8px var(--turf-glow)}
+.split-pane{max-height:calc(100vh - 230px);overflow-y:auto}
 
-/* ---- Sidebar goal-transition lines ---- */
-.smatch-goals{margin-top:6px;padding-top:6px;border-top:1px dashed rgba(255,255,255,.06);display:flex;flex-direction:column;gap:2px}
-.smatch-goal{font-size:10.5px;line-height:1.35;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* ---- sidebar goal transitions ---- */
+.smatch-goals{margin-top:7px;padding-top:7px;border-top:1px dashed var(--line);display:flex;flex-direction:column;gap:3px}
+.smatch-goal{font-size:10.5px;line-height:1.4;font-family:var(--mono);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;color:var(--text)}
 
-/* ---- Inline edit cells ---- */
-table.ot td.edit{padding:2px}
-table.ot td.edit input{width:100%;min-width:50px;padding:4px 5px;background:#0d1117;border:1px solid var(--primary);border-radius:3px;color:var(--text);font-size:11px;font-variant-numeric:tabular-nums;text-align:center;font-family:inherit}
-table.ot td.edit input:focus{outline:none;border-color:var(--orange);background:#161b22}
-.btn-orange{border-color:var(--orange);color:var(--orange);background:rgba(210,153,34,.1)}
-.btn-orange:hover{background:var(--orange);color:#000}
-.btn-red{border-color:var(--red);color:var(--red);background:rgba(248,81,73,.08)}
-.btn-red:hover{background:var(--red);color:#fff}
-.btn.is-active{background:var(--primary);color:#000;border-color:var(--primary)}
+/* ---- import dropzone ---- */
+#importDrop{border:1.5px dashed var(--line2);border-radius:var(--r);padding:26px;text-align:center;cursor:pointer;
+  color:var(--muted);transition:all .18s;background:rgba(11,19,14,.4)}
+#importDrop:hover{border-color:var(--turf);color:var(--turf);background:rgba(61,220,132,.04)}
 
-/* ---- Confirm popup (Xóa) ---- */
-.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:300;display:none;align-items:center;justify-content:center}
-.modal-bg.show{display:flex}
-.modal-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px 20px;width:420px;max-width:92vw}
-.modal-card h3{margin:0 0 8px;font-size:14px;color:var(--red)}
-.modal-card p{font-size:12px;color:var(--text);margin:0 0 14px;line-height:1.5}
-.modal-actions{display:flex;gap:8px;justify-content:flex-end}
+/* import modal (inline-styled in body) inherits fonts via body */
 </style>
 </head>
 <body>
-<div class="hdr">
-  <div class="hdr-logo">&#x1F4E6; Data Browser</div>
-  <a href="/">&larr; Dashboard</a>
-  <a href="/analyzer">&#x1F50D; Analyzer</a>
-  <a href="/formula">&#x1F4CA; Công thức</a>
-  <div class="hdr-spacer"></div>
-  <button class="btn-sm" onclick="goDisguise()">&#x1F504; &#x110;&#x1ED5;i</button>
+<div class="grain" aria-hidden="true"></div>
+<div class="floodglow" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="brand-mark">⚽</span>
+    <span class="brand-name">Foot<b>ball</b>&nbsp;Ops</span>
+  </a>
+  <nav class="topnav">
+    <a href="/">Bảng điều khiển</a>
+    <a href="/analyzer">Analyzer</a>
+    <a href="/data" class="active">Dữ liệu</a>
+    <a href="/formula">Công thức</a>
+  </nav>
+  <div class="topbar-spacer"></div>
+  <button class="btn-sm" onclick="goDisguise()">🔄 Đổi</button>
   <form method="post" action="/logout" style="display:inline;margin:0">
-    <button type="submit" class="btn-sm" style="border-color:var(--red);color:var(--red)">&#x110;&#x103;ng xu&#x1EA5;t</button>
+    <button type="submit" class="btn-sm danger">Đăng xuất</button>
   </form>
-</div>
-<div class="main">
+</header>
+<div class="db-main">
   <div class="sidebar">
     <div class="search-panel">
-      <input class="sinput" id="sqText" type="search" placeholder="T&#xEC;m &#x111;&#x1ED9;i, gi&#x1EA3;i &#x111;&#x1EA5;u...">
+      <input class="sinput" id="sqText" type="search" placeholder="Tìm đội, giải đấu...">
       <div class="sflex">
-        <input class="sinput" id="sqFrom" type="date" style="flex:1" title="T&#x1EEB; ng&#xE0;y">
-        <input class="sinput" id="sqTo" type="date" style="flex:1" title="&#x110;&#x1EBF;n ng&#xE0;y">
+        <input class="sinput" id="sqFrom" type="date" style="flex:1" title="Từ ngày">
+        <input class="sinput" id="sqTo" type="date" style="flex:1" title="Đến ngày">
       </div>
       <div class="sflex">
         <select class="sinput" id="sqStatus" style="flex:1">
-          <option value="">M&#x1ECD;i tr&#x1EA1;ng th&#xE1;i</option>
+          <option value="">Mọi trạng thái</option>
           <option value="H1">H1</option>
           <option value="H2">H2</option>
           <option value="HT">HT</option>
           <option value="FT">FT</option>
           <option value="UPCOMING">UPCOMING</option>
         </select>
-        <button class="btn-sm" onclick="doSearch()" style="flex:0 0 auto">&#x1F50D; T&#xEC;m</button>
+        <button class="btn-sm" onclick="doSearch()" style="flex:0 0 auto">🔍 Tìm</button>
       </div>
-      <button class="btn-sm" onclick="openImportModal()" style="width:100%;margin-top:8px;border-color:var(--green);color:var(--green)">&#x1F4E5; Import CSV</button>
+      <button class="btn btn-green" onclick="openImportModal()" style="width:100%;margin-top:9px">📥 Import CSV</button>
     </div>
 
-    <div class="slist" id="slist"><div class="smatch-empty">Nh&#x1EAD;p t&#x1EEB; kh&#xF3;a &#x111;&#x1EC3; t&#xEC;m ki&#x1EBF;m</div></div>
+    <div class="slist" id="slist"><div class="smatch-empty">Nhập từ khóa để tìm kiếm</div></div>
   </div>
   <div class="content">
-    <!-- Advanced filters — chuyển sang content area, grid 4 ô/hàng -->
     <div class="adv-panel" id="advPanel" data-open>
-      <div class="adv-toggle" onclick="toggleAdv()">T&#xEC;m n&#xE2;ng cao (Opening / OU / HC theo b&#xE0;n)</div>
+      <div class="adv-toggle" onclick="toggleAdv()">Tìm nâng cao (Opening / OU / HC theo bàn)</div>
       <div class="adv-body">
         <div class="adv-opening">
           <div class="adv-cell"><label>HC opening</label><input id="advOpenHc" placeholder="vd: 0.75"></div>
@@ -169,69 +138,69 @@ table.ot td.edit input:focus{outline:none;border-color:var(--orange);background:
         </div>
         <div class="adv-twocol">
           <div class="adv-col">
-            <div class="adv-sub">OU tr&#x01B0;&#x1EDB;c b&#xE0;n th&#x1EAF;ng</div>
+            <div class="adv-sub">OU trước bàn thắng</div>
             <div class="adv-grid">
-              <div class="adv-cell"><label>B&#xE0;n 1</label><input id="advOuB1"></div>
-              <div class="adv-cell"><label>B&#xE0;n 2</label><input id="advOuB2"></div>
-              <div class="adv-cell"><label>B&#xE0;n 3</label><input id="advOuB3"></div>
-              <div class="adv-cell"><label>B&#xE0;n 4</label><input id="advOuB4"></div>
-              <div class="adv-cell"><label>B&#xE0;n 5</label><input id="advOuB5"></div>
-              <div class="adv-cell"><label>B&#xE0;n 6</label><input id="advOuB6"></div>
-              <div class="adv-cell"><label>B&#xE0;n 7</label><input id="advOuB7"></div>
-              <div class="adv-cell"><label>B&#xE0;n 8</label><input id="advOuB8"></div>
+              <div class="adv-cell"><label>Bàn 1</label><input id="advOuB1"></div>
+              <div class="adv-cell"><label>Bàn 2</label><input id="advOuB2"></div>
+              <div class="adv-cell"><label>Bàn 3</label><input id="advOuB3"></div>
+              <div class="adv-cell"><label>Bàn 4</label><input id="advOuB4"></div>
+              <div class="adv-cell"><label>Bàn 5</label><input id="advOuB5"></div>
+              <div class="adv-cell"><label>Bàn 6</label><input id="advOuB6"></div>
+              <div class="adv-cell"><label>Bàn 7</label><input id="advOuB7"></div>
+              <div class="adv-cell"><label>Bàn 8</label><input id="advOuB8"></div>
             </div>
           </div>
           <div class="adv-col">
-            <div class="adv-sub">HC sau b&#xE0;n th&#x1EAF;ng</div>
+            <div class="adv-sub">HC sau bàn thắng</div>
             <div class="adv-grid">
-              <div class="adv-cell"><label>B&#xE0;n 1</label><input id="advHcA1"></div>
-              <div class="adv-cell"><label>B&#xE0;n 2</label><input id="advHcA2"></div>
-              <div class="adv-cell"><label>B&#xE0;n 3</label><input id="advHcA3"></div>
-              <div class="adv-cell"><label>B&#xE0;n 4</label><input id="advHcA4"></div>
-              <div class="adv-cell"><label>B&#xE0;n 5</label><input id="advHcA5"></div>
-              <div class="adv-cell"><label>B&#xE0;n 6</label><input id="advHcA6"></div>
-              <div class="adv-cell"><label>B&#xE0;n 7</label><input id="advHcA7"></div>
-              <div class="adv-cell"><label>B&#xE0;n 8</label><input id="advHcA8"></div>
+              <div class="adv-cell"><label>Bàn 1</label><input id="advHcA1"></div>
+              <div class="adv-cell"><label>Bàn 2</label><input id="advHcA2"></div>
+              <div class="adv-cell"><label>Bàn 3</label><input id="advHcA3"></div>
+              <div class="adv-cell"><label>Bàn 4</label><input id="advHcA4"></div>
+              <div class="adv-cell"><label>Bàn 5</label><input id="advHcA5"></div>
+              <div class="adv-cell"><label>Bàn 6</label><input id="advHcA6"></div>
+              <div class="adv-cell"><label>Bàn 7</label><input id="advHcA7"></div>
+              <div class="adv-cell"><label>Bàn 8</label><input id="advHcA8"></div>
             </div>
           </div>
         </div>
         <div class="adv-actions">
           <button class="btn-sm" onclick="resetAdv()">Reset</button>
-          <button class="btn-sm" style="background:var(--pdim);color:var(--primary);border-color:var(--primary)" onclick="doAdvancedSearch()">&#x1F3AF; &#xC1;p d&#x1EE5;ng</button>
+          <button class="btn btn-primary" onclick="doAdvancedSearch()">🎯 Áp dụng</button>
         </div>
       </div>
     </div>
-    <div id="contentArea"><div class="empty">&larr; Ch&#x1ECD;n m&#x1ED9;t tr&#x1EAD;n &#x111;&#x1EA5;u &#x111;&#x1EC3; xem chi ti&#x1EBF;t</div></div>
+    <div id="contentArea"><div class="empty">← Chọn một trận đấu để xem chi tiết</div></div>
   </div>
 </div>
 
 <!-- Import CSV modal -->
-<div id="importModalBg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:200;align-items:center;justify-content:center" onclick="if(event.target===this)closeImportModal()">
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:20px;width:560px;max-width:94vw">
-    <div style="display:flex;align-items:center;margin-bottom:14px">
-      <h3 style="margin:0;color:var(--primary);font-size:15px">&#x1F4E5; Import CSV t&#x1EEB; tool c&#x0169;</h3>
-      <button onclick="closeImportModal()" style="margin-left:auto;background:none;border:0;color:var(--muted);cursor:pointer;font-size:20px;line-height:1">&times;</button>
+<div id="importModalBg" class="modal-bg" onclick="if(event.target===this)closeImportModal()">
+  <div class="modal" style="max-width:600px">
+    <div style="display:flex;align-items:center;margin-bottom:16px">
+      <h2 style="margin:0">📥 Import CSV từ tool cũ</h2>
+      <button onclick="closeImportModal()" style="margin-left:auto;background:none;border:0;color:var(--muted);cursor:pointer;font-size:22px;line-height:1">&times;</button>
     </div>
-    <div id="importDrop" tabindex="0" style="border:1px dashed var(--border);border-radius:var(--r);padding:24px;text-align:center;cursor:pointer;color:var(--muted);transition:all .15s">
-      <div style="font-size:28px;margin-bottom:6px">&#x1F4C2;</div>
-      <strong>Th&#x1EA3; file CSV v&#xE0;o &#x111;&#xE2;y</strong>
-      <div style="font-size:11px;margin-top:4px">ho&#x1EB7;c click &#x111;&#x1EC3; ch&#x1ECD;n nhi&#x1EC1;u file</div>
+    <div id="importDrop" tabindex="0">
+      <div style="font-size:30px;margin-bottom:8px">📂</div>
+      <strong>Thả file CSV vào đây</strong>
+      <div style="font-size:11px;margin-top:5px">hoặc click để chọn nhiều file</div>
       <input type="file" id="importFile" accept=".csv,text/csv" multiple style="display:none">
     </div>
-    <div id="importProgress" style="margin-top:12px;font-size:12px;color:var(--muted);min-height:18px"></div>
-    <div id="importResult" style="margin-top:8px;font-size:12px"></div>
-    <div style="margin-top:14px;font-size:11px;color:var(--muted)">Pattern t&#xEA;n file: <code>YYYYMMDD_HHMM_&lt;league&gt;-&lt;home&gt;_vs_&lt;away&gt;.csv</code></div>
+    <div id="importProgress" style="margin-top:13px;font-size:12px;color:var(--muted);min-height:18px"></div>
+    <div id="importResult" style="margin-top:9px;font-size:12px"></div>
+    <div style="margin-top:14px;font-size:11px;color:var(--faint)">Pattern tên file: <code>YYYYMMDD_HHMM_&lt;league&gt;-&lt;home&gt;_vs_&lt;away&gt;.csv</code></div>
   </div>
 </div>
 
 <!-- Delete confirm popup -->
 <div id="delConfirmBg" class="modal-bg" onclick="if(event.target===this)closeDeleteConfirm()">
   <div class="modal-card">
-    <h3>&#x26A0; X&#xE1;c nh&#x1EAD;n x&#xF3;a tr&#x1EAD;n</h3>
+    <h3>⚠ Xác nhận xóa trận</h3>
     <p id="delConfirmText"></p>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeDeleteConfirm()">H&#x1EE7;y</button>
-      <button class="btn btn-red" onclick="doDelete()">&#x1F5D1; X&#xF3;a</button>
+    <div class="modal-actions-2">
+      <button class="btn" onclick="closeDeleteConfirm()">Hủy</button>
+      <button class="btn btn-red" onclick="doDelete()">🗑 Xóa</button>
     </div>
   </div>
 </div>

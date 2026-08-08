@@ -200,8 +200,14 @@ table.tran tr.goal:nth-child(even){background:#4a3500 !important}
 .model-dd-item:hover,.model-dd-item.active{background:var(--primary);color:#fff}
 .model-dd-item.dim{color:var(--muted)}
 </style>
+<link rel="stylesheet" href="/static/fonts.css?v=44" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="/static/fonts.css?v=44"></noscript>
+<link rel="stylesheet" href="/static/analyzer.css?v=14">
 </head>
 <body>
+<div class="an-flood" aria-hidden="true"></div>
+<div class="an-vig" aria-hidden="true"></div>
+<div class="an-grain" aria-hidden="true"></div>
 
 <div class="hdr">
   <div class="hdr-logo">&#x26BD; Analyzer</div>
@@ -720,6 +726,85 @@ async def api_tag_lookup(
     from ..database import tag_lookup as _tag_lookup
     result = _tag_lookup(tag=tag.strip(), open_hc=open_hc, open_ou=open_ou, min_n=min_n)
     return JSONResponse(result)
+
+
+
+# ---------------------------------------------------------------------------
+# batch-lookup
+# ---------------------------------------------------------------------------
+@router.post("/api/analyzer/batch-lookup")
+async def api_batch_lookup(
+    payload: dict = Body(...),
+    user: str = Depends(require_auth),
+):
+    queries = payload.get("queries") or []
+    if not isinstance(queries, list) or not queries:
+        raise HTTPException(400, "queries phai la list khong rong")
+    if len(queries) > 100:
+        raise HTTPException(400, "toi da 100 query/lan")
+
+    from ..database import search_matches, get_match_pattern, _parse_open_line_to_float, _cover_score
+    from ..database import is_prestigious
+
+    results = []
+    for q in queries:
+        q = (q or "").strip()
+        if not q:
+            results.append({"query": q, "found": False, "reason": "empty"})
+            continue
+        matches = search_matches(q=q, status="FT", limit=5)
+        if not matches:
+            matches = search_matches(q=q, limit=5)
+        if not matches:
+            results.append({"query": q, "found": False, "reason": "no_match"})
+            continue
+        chosen = None
+        pattern = None
+        for m in matches:
+            p = get_match_pattern(m["id"])
+            if p and p.get("parse_ok"):
+                chosen = m
+                pattern = p
+                break
+        if not chosen:
+            chosen = matches[0]
+            pattern = get_match_pattern(chosen["id"])
+        entry = {
+            "query": q,
+            "found": True,
+            "match_id": chosen["id"],
+            "home": chosen.get("home"),
+            "away": chosen.get("away"),
+            "competition": chosen.get("competition"),
+            "kickoff": chosen.get("start_time_utc"),
+            "status": chosen.get("status"),
+            "ft_score": f"{chosen.get('home_score', 0)}-{chosen.get('away_score', 0)}" if chosen.get("status") == "FT" else None,
+            "total_goals": (chosen.get("home_score") or 0) + (chosen.get("away_score") or 0) if chosen.get("status") == "FT" else None,
+            "prestigious": is_prestigious(chosen.get("competition")),
+        }
+        if pattern and pattern.get("parse_ok"):
+            entry["tags"] = pattern.get("tags") or []
+            entry["confidence"] = pattern.get("confidence")
+            entry["open_hc"] = pattern.get("open_hc")
+            entry["open_ou"] = pattern.get("open_ou")
+            entry["open_hc_side"] = pattern.get("open_hc_side")
+            entry["has_pattern"] = True
+            line = _parse_open_line_to_float(pattern.get("open_hc"))
+            side = pattern.get("open_hc_side")
+            hs = chosen.get("home_score")
+            aw = chosen.get("away_score")
+            if line is not None and side in ("home", "away") and hs is not None and aw is not None:
+                margin = (hs - aw) if side == "home" else (aw - hs)
+                entry["cover_score"] = round(_cover_score(line, margin), 2)
+                entry["margin"] = margin
+            else:
+                entry["cover_score"] = None
+                entry["margin"] = None
+        else:
+            entry["has_pattern"] = False
+            entry["tags"] = []
+        results.append(entry)
+    return JSONResponse({"results": results})
 
 
 # ---------------------------------------------------------------------------

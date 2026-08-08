@@ -3,161 +3,48 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Football Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%BD%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#090a09">
+<title>Football Ops — Bảng điều khiển</title>
+<link rel="stylesheet" href="/static/fonts.css?v=44" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="/static/fonts.css?v=44"></noscript>
+<link rel="stylesheet" href="/static/theme.css?v=44">
 <style>
-:root{
-  --bg:#0d1117;--surface:#161b22;--card:#21262d;--border:#30363d;
-  --primary:#58a6ff;--pdim:#1f3a5f;
-  --red:#f85149;--green:#3fb950;--orange:#d29922;--purple:#bc8cff;--cyan:#39d353;
-  --text:#c9d1d9;--muted:#8b949e;--r:6px;
-  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
-
-/* ---- Header ----
-   z-index intentionally above the idle-lock overlay (9999) so the "🔄 Đổi"
-   button stays clickable even when the screen is locked, letting the user
-   one-click to the /market decoy from any state. */
-.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10000}
-.hdr-logo{font-size:17px;font-weight:700;color:var(--primary);display:flex;align-items:center;gap:6px}
-.hdr-spacer{flex:1}
-.hdr-info{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
-.hdr-user{color:var(--text);font-weight:600}
-.btn-sm{padding:5px 12px;border-radius:var(--r);border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-size:12px;transition:all .15s}
-.btn-sm:hover{border-color:var(--primary);color:var(--primary)}
-.btn-sm.danger:hover{border-color:var(--red);color:var(--red)}
-
-/* ---- Status dot ---- */
-.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
-.dot-green{background:var(--green);animation:blink 2s infinite}
-.dot-orange{background:var(--orange)}
-.dot-red{background:var(--red)}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
-
-/* ---- Main layout ---- */
-.main{flex:1;padding:20px 24px;max-width:1500px;margin:0 auto;width:100%}
-
-/* ---- Control panel ---- */
-.ctrl{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px 20px;margin-bottom:18px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
-.ctrl-status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
-.ctrl-meta{font-size:12px;color:var(--muted);flex:1}
-.ctrl-meta span{color:var(--text);font-weight:500}
-.btn{padding:6px 16px;border-radius:var(--r);border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:13px;font-weight:500;transition:all .15s}
-.btn:hover{background:var(--card)}
-.btn-primary{background:var(--pdim);border-color:var(--primary);color:var(--primary)}
-.btn-primary:hover{background:var(--primary);color:#0d1117}
-.btn-warn{background:rgba(210,153,34,.15);border-color:var(--orange);color:var(--orange)}
-.btn-warn:hover{background:var(--orange);color:#0d1117}
-.btn-danger{background:rgba(248,81,73,.1);border-color:var(--red);color:var(--red)}
-.btn-danger:hover{background:var(--red);color:white}
-.btn:disabled{opacity:.4;cursor:default}
-
-/* ---- Stats ---- */
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:18px}
-.stat{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;text-align:center}
-.stat-n{font-size:26px;font-weight:700;line-height:1.1}
-.stat-l{font-size:11px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
-.c-live{color:var(--red)}.c-ht{color:var(--purple)}.c-up{color:var(--orange)}.c-ft{color:var(--green)}.c-all{color:var(--primary)}
-
-/* ---- Section ---- */
-.sec{margin-bottom:24px}
-.sec-hdr{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
-.sec-title{font-size:14px;font-weight:700;letter-spacing:.3px}
-.sec-badge{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:2px 8px;font-size:11px;color:var(--muted)}
-
-/* ---- Match cards ---- */
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:10px}
-.mcard{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:14px;transition:border-color .15s}
-.mcard:hover{border-color:var(--primary)}
-.mcard.live{border-left:3px solid var(--red)}
-.mcard.ht{border-left:3px solid var(--purple)}
-.mcomp{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mteams{display:flex;align-items:center;gap:6px;margin-bottom:6px}
-.mteam{font-size:13px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mteam.away{text-align:right}
-.mscore{font-size:18px;font-weight:700;color:var(--red);white-space:nowrap;min-width:46px;text-align:center}
-.minfo{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:8px}
-.mmin{color:var(--orange);font-weight:700}
-.modds{display:flex;gap:5px;flex-wrap:wrap}
-.chip{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:3px 7px;font-size:10px}
-.chip b{color:var(--primary)}
-.empty{color:var(--muted);padding:20px;text-align:center;font-size:13px}
-
-/* ---- Table ---- */
-.tbar{display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap}
-.tinput{flex:1;min-width:180px;padding:7px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:13px}
-.tinput:focus{outline:none;border-color:var(--primary)}
-.tsel{padding:7px 10px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:13px;cursor:pointer}
-.twrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-size:12px;min-width:750px}
-th{background:var(--surface);padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap}
-td{padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
-tr:last-child td{border-bottom:none}
-tr:hover td{background:rgba(255,255,255,.025)}
-
-/* ---- Badges ---- */
-.badge{display:inline-block;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:700;letter-spacing:.4px}
-.b-live{background:rgba(248,81,73,.2);color:var(--red);border:1px solid rgba(248,81,73,.35)}
-.b-up{background:rgba(210,153,34,.2);color:var(--orange);border:1px solid rgba(210,153,34,.35)}
-.b-ft{background:rgba(63,185,80,.2);color:var(--green);border:1px solid rgba(63,185,80,.35)}
-.b-ht{background:rgba(188,140,255,.2);color:var(--purple);border:1px solid rgba(188,140,255,.35)}
-.b-x{background:rgba(139,148,158,.15);color:var(--muted);border:1px solid var(--border)}
-
-/* ---- Logs ---- */
-.logbox{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;height:220px;overflow-y:auto;font-family:'Consolas','Monaco',monospace;font-size:11px}
-.le{margin-bottom:3px;line-height:1.5}
-.lt{color:var(--muted);margin-right:6px}
-.ll-INFO{color:var(--primary)}
-.ll-WARN{color:var(--orange)}
-.ll-ERROR{color:var(--red)}
-
-/* ---- Error toast ---- */
-.toast{position:fixed;bottom:20px;right:20px;background:#3d1e20;border:1px solid var(--red);border-radius:var(--r);padding:12px 16px;color:var(--red);font-size:13px;display:none;z-index:999}
-
-/* ---- Priority highlights — chỉ tint nhẹ + badge ★ Px góc trái ---- */
-.prio-1,.prio-2,.prio-3,.prio-4{background:rgba(255,255,255,.025)}
-.prio-tag{position:absolute;top:4px;left:8px;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;opacity:.85}
-
-/* ---- Modal ---- */
-.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9000;display:none;align-items:center;justify-content:center;padding:24px}
-.modal-bg.on{display:flex}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto}
-.modal h2{font-size:17px;margin-bottom:16px;color:var(--primary)}
-.modal label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:10px 0 4px}
-.modal input[type=text],.modal input[type=number]{width:100%;padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:13px}
-.modal input:focus{outline:none;border-color:var(--primary)}
-.modal-row{display:flex;gap:10px}
-.modal-row > *{flex:1}
-.modal-check{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer}
-.modal-check input{width:auto;margin:0}
-.modal-radio{display:flex;gap:14px;margin:8px 0}
-.modal-radio label{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--text);margin:0;cursor:pointer}
-.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid var(--border)}
-.modal-fieldset{border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;margin-top:8px}
-.modal-fieldset legend{font-size:11px;color:var(--muted);padding:0 6px;text-transform:uppercase;letter-spacing:.5px}
-.modal-status{font-size:12px;color:var(--muted);min-height:18px}
+/* page-level: timeline stat tiles reuse .stat */
+#statsTimeline .stat{padding:13px 14px 11px}
+#statsTimeline .stat-n{font-size:24px}
+.date-nav{display:flex;align-items:center;gap:6px}
+.date-nav input[type=date]{padding:5px 9px;font-size:12px}
+.date-nav .btn-sm{padding:4px 10px}
 </style>
 </head>
 <body>
+<div class="grain" aria-hidden="true"></div>
+<div class="floodglow" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
 
-<!-- Header -->
-<header class="hdr">
-  <div class="hdr-logo">&#x26BD; Football</div>
-  <div class="hdr-spacer"></div>
-  <div class="hdr-info">
+<!-- Topbar -->
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="brand-mark">⚽</span>
+    <span class="brand-name">Foot<b>ball</b>&nbsp;Ops</span>
+  </a>
+  <nav class="topnav">
+    <a href="/" class="active">Bảng điều khiển</a>
+    <a href="/analyzer">Analyzer</a>
+    <a href="/data">Dữ liệu</a>
+    <a href="/formula">Công thức</a>
+  </nav>
+  <div class="topbar-spacer"></div>
+  <div class="topbar-status">
     <span class="dot" id="hdrDot"></span>
     <span id="hdrStatus">…</span>
-    <span style="color:var(--border)">|</span>
-    <span id="hdrLoop" style="color:var(--muted)"></span>
-    <span style="color:var(--border)">|</span>
-    <span class="hdr-user" id="hdrUser"></span>
+    <span class="loop" id="hdrLoop"></span>
   </div>
-  <a href="/analyzer" class="btn-sm" style="text-decoration:none;display:inline-block">🔍 Analyzer</a>
-  <a href="/data" class="btn-sm" style="text-decoration:none">📦 Dữ liệu (Layer 3)</a>
-  <a href="/formula" class="btn-sm" style="text-decoration:none">📊 Công thức</a>
-  <button class="btn-sm" onclick="openTelegramModal()">📨 Cài đặt Telegram</button>
-  <button class="btn-sm" onclick="goDisguise()">🔄 Đổi</button>
+  <span class="topbar-user" id="hdrUser"></span>
+  <span class="topbar-sep"></span>
+  <button class="btn-sm" onclick="openTelegramModal()">📨 Telegram</button>
+  <button class="btn-sm" onclick="goDisguise()" title="Chuyển sang chế độ decoy">🔄 Đổi</button>
   <form method="post" action="/logout" style="margin:0">
     <button class="btn-sm danger" type="submit">Đăng xuất</button>
   </form>
@@ -166,62 +53,62 @@ tr:hover td{background:rgba(255,255,255,.025)}
 <!-- Main -->
 <div class="main">
 
-  <!-- Control panel -->
-  <div class="ctrl">
+  <!-- Control deck -->
+  <div class="ctrl reveal">
     <div class="ctrl-status">
       <span class="dot" id="ctrlDot"></span>
       <span id="ctrlLabel">Đang kết nối…</span>
     </div>
     <div class="ctrl-meta">
-      Fetch gần nhất: <span id="ctrlLast">—</span> &nbsp;|&nbsp;
-      Thời gian: <span id="ctrlMs">—</span> &nbsp;|&nbsp;
-      Lỗi: <span id="ctrlErr">0</span> &nbsp;|&nbsp;
-      Đã lưu: <span id="ctrlSaved">0</span>
+      <div>Fetch gần nhất&nbsp;<span id="ctrlLast">—</span></div>
+      <div>Thời gian&nbsp;<span id="ctrlMs">—</span></div>
+      <div>Lỗi&nbsp;<span id="ctrlErr">0</span></div>
+      <div>Đã lưu&nbsp;<span id="ctrlSaved">0</span></div>
     </div>
     <button class="btn btn-warn" id="btnPause" onclick="ctrlPause()">⏸ Tạm dừng</button>
     <button class="btn btn-primary" id="btnResume" onclick="ctrlResume()" style="display:none">▶ Tiếp tục</button>
     <button class="btn" id="btnForce" onclick="ctrlForce()">⚡ Fetch ngay</button>
   </div>
 
-  <!-- Stats (TỔNG = matches imported via CSV) -->
-  <div class="stats">
-    <div class="stat" title="Trận đã import qua CSV"><div class="stat-n c-all" id="sAll">—</div><div class="stat-l">Tổng (CSV)</div></div>
-    <div class="stat"><div class="stat-n c-live" id="sLive">—</div><div class="stat-l">🔴 Live</div></div>
-    <div class="stat"><div class="stat-n c-ht" id="sHt">—</div><div class="stat-l">⏸ HT</div></div>
-    <div class="stat"><div class="stat-n c-up" id="sUp">—</div><div class="stat-l">⏱ Sắp đấu</div></div>
-    <div class="stat"><div class="stat-n c-ft" id="sFt">—</div><div class="stat-l">✓ Kết thúc</div></div>
+  <!-- Stats -->
+  <div class="stats reveal reveal-d1">
+    <div class="stat c-all" title="Trận đã import qua CSV"><div class="stat-n" id="sAll">—</div><div class="stat-l">Tổng (CSV)</div></div>
+    <div class="stat c-live"><div class="stat-n" id="sLive">—</div><div class="stat-l">🔴 Đang live</div></div>
+    <div class="stat c-ht"><div class="stat-n" id="sHt">—</div><div class="stat-l">⏸ Giữa hiệp</div></div>
+    <div class="stat c-up"><div class="stat-n" id="sUp">—</div><div class="stat-l">⏱ Sắp đấu</div></div>
+    <div class="stat c-ft"><div class="stat-n" id="sFt">—</div><div class="stat-l">✓ Kết thúc</div></div>
   </div>
 
-  <!-- Live + priority feed (gộp 1 section, lọc stale &gt;4h, bỏ FT) -->
-  <div class="sec">
+  <!-- Live + priority feed -->
+  <div class="sec reveal reveal-d2">
     <div class="sec-hdr">
-      <span class="sec-title">🔴 Đang diễn ra</span>
+      <span class="sec-title">Đang diễn ra</span>
       <span class="sec-badge" id="liveCount">0</span>
       <span style="margin-left:auto;font-size:11px;color:var(--muted)">
-        Toàn bộ danh sách → <a href="/data" style="color:var(--primary)">/data (Layer 3)</a>
+        Toàn bộ danh sách → <a href="/data">/data (Layer 3)</a>
       </span>
     </div>
     <div class="grid" id="liveGrid"><p class="empty">Không có trận nào đang diễn ra</p></div>
   </div>
 
-  <!-- Timeline stats (date-picker) -->
-  <div class="sec">
+  <!-- Timeline stats -->
+  <div class="sec reveal reveal-d3">
     <div class="sec-hdr">
-      <span class="sec-title">📅 Thống kê hệ thống</span>
-      <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+      <span class="sec-title">Thống kê hệ thống</span>
+      <div class="date-nav" style="margin-left:auto">
         <button class="btn-sm" onclick="shiftStatsDate(-1)">◀</button>
-        <input type="date" id="statsDate" class="tsel" style="font-size:12px;padding:4px 8px">
+        <input type="date" id="statsDate" class="tsel">
         <button class="btn-sm" onclick="shiftStatsDate(+1)">▶</button>
-        <button class="btn-sm" onclick="setStatsToToday()" style="margin-left:6px">Hôm nay</button>
+        <button class="btn-sm" onclick="setStatsToToday()">Hôm nay</button>
       </div>
     </div>
-    <div id="statsTimeline" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px"></div>
+    <div id="statsTimeline" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px"></div>
   </div>
 
   <!-- System logs -->
-  <div class="sec">
+  <div class="sec reveal reveal-d4">
     <div class="sec-hdr">
-      <span class="sec-title">🖥 System Log</span>
+      <span class="sec-title">System Log</span>
       <button class="btn-sm" onclick="clearLogs()" style="margin-left:auto">Xóa</button>
     </div>
     <div class="logbox" id="logbox"></div>
@@ -233,7 +120,7 @@ tr:hover td{background:rgba(255,255,255,.025)}
 
 <div class="toast" id="toast"></div>
 
-<!-- Telegram Setting modal — Yêu cầu #7 -->
+<!-- Telegram Setting modal -->
 <div class="modal-bg" id="tgModal" onclick="if(event.target===this)closeTelegramModal()">
   <div class="modal">
     <h2>📨 Cài đặt thông báo Telegram</h2>
@@ -273,7 +160,7 @@ tr:hover td{background:rgba(255,255,255,.025)}
     <div class="modal-actions">
       <button class="btn-sm" onclick="testTelegram()">Gửi thử</button>
       <button class="btn-sm" onclick="closeTelegramModal()">Đóng</button>
-      <button class="btn-sm" style="background:var(--pdim);color:var(--primary);border-color:var(--primary)" onclick="saveTelegramSettings()">💾 Đổi & lưu</button>
+      <button class="btn btn-primary" onclick="saveTelegramSettings()">💾 Đổi &amp; lưu</button>
     </div>
   </div>
 </div>
@@ -348,6 +235,7 @@ async function apiFetch(url, opts) {
 
 // ------------------------------------------------------------------ status poll
 async function pollStatus() {
+  if (document.hidden) return;  // v44: skip when tab hidden
   const data = await apiFetch('/api/status');
   if (!data) return;
 
@@ -356,7 +244,6 @@ async function pollStatus() {
   document.getElementById('hdrUser').textContent = currentUser;
 
   // Dot + label
-  const runDot  = c.running && !c.paused;
   const dotId   = ['hdrDot','ctrlDot'];
   const dotCls  = c.running ? (c.paused ? 'dot dot-orange' : 'dot dot-green') : 'dot dot-red';
   dotId.forEach(id => document.getElementById(id).className = dotCls);
@@ -394,6 +281,7 @@ async function pollStatus() {
 
 // ------------------------------------------------------------------ matches poll
 async function pollMatches() {
+  if (document.hidden) return;  // v44: skip when tab hidden
   const data = await apiFetch('/api/matches');
   if (!data) return;
   allMatches = data;
@@ -426,21 +314,25 @@ function renderMatchCard(m, prefix){
   const href = '/match/' + encodeURIComponent(m.id);
   const aHref = '/analyzer?match_id=' + encodeURIComponent(m.id);
   const isPinned = pinned.has(m.id);
-  const pinBtn = '<button onclick="togglePin(' + JSON.stringify(m.id) + ',event)" style="position:absolute;top:8px;right:8px;background:none;border:none;cursor:pointer;font-size:14px;opacity:' + (isPinned?'1':'.35') + ';padding:2px;z-index:2">' + (isPinned?'⭐':'☆') + '</button>';
+  const pinBtn = '<button onclick="togglePin(' + JSON.stringify(m.id) + ',event)" style="position:absolute;top:8px;right:8px;background:none;border:none;cursor:pointer;font-size:14px;opacity:' + (isPinned?'1':'.35') + ';padding:2px;z-index:2" title="Ghim trận">' + (isPinned?'⭐':'☆') + '</button>';
   const prio = m.priority_level || 5;
   const prioCls = (prio <= 4) ? ('prio-' + prio) : '';
-  const prioTag = (prio <= 4) ? ('<span class="prio-tag" style="color:'+(prio===1?'#d29922':prio===2?'#f85149':prio===3?'#3fb950':'#58a6ff')+'">★ P'+prio+'</span>') : '';
-  return '<div class="mcard ' + cls + ' ' + prioCls + '" style="position:relative" data-prio="'+prio+'">' +
+  const prioTag = (prio <= 4) ? ('<span class="prio-tag" style="color:'+(prio===1?'var(--gold)':prio===2?'var(--red)':prio===3?'var(--turf)':'var(--blue)')+'">★ P'+prio+'</span>') : '';
+  const hScore = m.home_score||0, aScore = m.away_score||0;
+  const zeroCls = (hScore+aScore === 0) ? ' zero' : '';
+  const homeEsc = String(m.home||'').replace(/"/g,'&quot;');
+  const awayEsc = String(m.away||'').replace(/"/g,'&quot;');
+  return '<div class="mcard ' + cls + ' ' + prioCls + '" data-prio="'+prio+'" data-mid="'+m.id+'">' +
     prioTag + pinBtn +
     '<a href="' + href + '" style="text-decoration:none;color:inherit;display:block;padding-top:'+(prio<=4?'12px':'0')+'">' +
-    '<div class="mcomp">' + m.competition + '</div>' +
-    '<div class="mteams"><div class="mteam">' + m.home + '</div>' +
-    '<div class="mscore">' + (m.home_score||0) + ' - ' + (m.away_score||0) + '</div>' +
-    '<div class="mteam away">' + m.away + '</div></div>' +
+    '<div class="mcomp" title="' + String(m.competition||'').replace(/"/g,'&quot;') + '">' + m.competition + '</div>' +
+    '<div class="mteams"><div class="mteam" title="' + homeEsc + '">' + m.home + '</div>' +
+    '<div class="mscore' + zeroCls + '" id="score-' + m.id + '">' + hScore + ' - ' + aScore + '</div>' +
+    '<div class="mteam away" title="' + awayEsc + '">' + m.away + '</div></div>' +
     '<div class="minfo"><span>' + fmt(m.start_time_utc) + '</span><span class="mmin">' + min + '</span></div>' +
     '<div class="modds">' + ou + hc + x2 + '</div>' +
     '</a>' +
-    '<a href="' + aHref + '" style="display:block;text-align:center;padding:5px;font-size:11px;font-weight:700;color:var(--primary);border-top:1px solid var(--border);text-decoration:none;background:rgba(88,166,255,.05)">🔍 Phân tích</a>' +
+    '<a href="' + aHref + '" class="mcard-act">🔍 Phân tích</a>' +
     '</div>';
 }
 
@@ -505,6 +397,7 @@ function shiftStatsDate(days){
   pollTimeline();
 }
 async function pollTimeline() {
+  if (document.hidden) return;  // v44: skip when tab hidden
   if (!statsDate) statsDate = isoToday();
   const url = '/api/stats/timeline?date=' + encodeURIComponent(statsDate);
   const data = await apiFetch(url);
@@ -521,7 +414,7 @@ async function pollTimeline() {
     {n: data.competitions, l:'Giải đấu', c:'c-ht'},
     {n: data.prestigious_count, l:'Giải uy tín', c:'c-up'},
     {n: data.big_odds_swing_count, l:'Kèo biến động lớn', c:'c-ht'},
-  ].map(s=>'<div class="stat"><div class="stat-n '+s.c+'">'+(s.n!=null?s.n:'—')+'</div><div class="stat-l">'+s.l+'</div></div>').join('');
+  ].map(s=>'<div class="stat '+s.c+'"><div class="stat-n">'+(s.n!=null?s.n:'—')+'</div><div class="stat-l">'+s.l+'</div></div>').join('');
 }
 
 // ------------------------------------------------------------------ Telegram modal
@@ -547,8 +440,8 @@ async function refreshTgDiag(){
   const el = document.getElementById('tgDiag');
   if (!d) { el.textContent = ''; return; }
   el.innerHTML =
-    'Bot token: <b style="color:'+(d.has_bot_token?'var(--green)':'var(--red)')+'">'+(d.has_bot_token?('OK · '+d.token_source):'thiếu')+'</b>' +
-    ' · Chat ID: <b style="color:'+(d.has_chat_ids?'var(--green)':'var(--red)')+'">'+(d.has_chat_ids?(d.chat_count+' chat · '+d.chat_source):'thiếu')+'</b>';
+    'Bot token: <b style="color:'+(d.has_bot_token?'var(--turf)':'var(--red)')+'">'+(d.has_bot_token?('OK · '+d.token_source):'thiếu')+'</b>' +
+    ' · Chat ID: <b style="color:'+(d.has_chat_ids?'var(--turf)':'var(--red)')+'">'+(d.has_chat_ids?(d.chat_count+' chat · '+d.chat_source):'thiếu')+'</b>';
 }
 function closeTelegramModal(){ document.getElementById('tgModal').classList.remove('on'); }
 async function saveTelegramSettings(){
@@ -568,7 +461,6 @@ async function saveTelegramSettings(){
   const r = await fetch('/api/telegram/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
   if (!r || !r.ok) { document.getElementById('tgStatus').textContent = 'Lỗi lưu cấu hình'; return; }
   document.getElementById('tgStatus').textContent = 'Đã lưu. Phiên sẽ bị khoá để xác thực lại.';
-  // Yêu cầu #12 — force re-auth via the existing idle-lock OTP flow.
   setTimeout(() => {
     closeTelegramModal();
     if (typeof window.showLock === 'function') window.showLock();
@@ -597,6 +489,23 @@ pollTimeline();
 setInterval(pollStatus,  5000);
 setInterval(pollMatches, 12000);
 setInterval(pollTimeline, 30000);
+
+// Score-change flash: when a card's score text changes between polls, bump it.
+(function(){
+  const prevScores = {};
+  const obs = new MutationObserver(() => {
+    document.querySelectorAll('.mscore[id]').forEach(el => {
+      const mid = el.id.replace('score-', '');
+      const txt = el.textContent.trim();
+      if (prevScores[mid] && prevScores[mid] !== txt) {
+        el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+      }
+      prevScores[mid] = txt;
+    });
+  });
+  const grid = document.getElementById('liveGrid');
+  if (grid) obs.observe(grid, { childList: true, subtree: true, characterData: true });
+})();
 </script>
 <script src="/static/lock.js"></script>
 </body>

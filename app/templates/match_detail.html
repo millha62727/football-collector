@@ -3,94 +3,80 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Chi tiết trận đấu — Football Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%BD%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#090a09">
+<title>Chi tiết trận đấu — Football Ops</title>
+<link rel="stylesheet" href="/static/fonts.css?v=44" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="/static/fonts.css?v=44"></noscript>
+<link rel="stylesheet" href="/static/theme.css?v=44">
 <style>
-:root{
-  --bg:#0d1117;--surface:#161b22;--card:#21262d;--border:#30363d;
-  --primary:#58a6ff;--pdim:#1f3a5f;
-  --red:#f85149;--green:#3fb950;--orange:#d29922;--purple:#bc8cff;
-  --text:#c9d1d9;--muted:#8b949e;--r:6px;
-  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
-
-.hdr{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10000}
-.hdr-back{color:var(--primary);text-decoration:none;font-size:14px;font-weight:600;padding:5px 10px;border-radius:var(--r);border:1px solid var(--border);transition:all .15s}
-.hdr-back:hover{background:var(--card);border-color:var(--primary)}
-.hdr-title{font-size:15px;font-weight:700;color:var(--text);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.btn-sm{padding:5px 12px;border-radius:var(--r);border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-size:12px;transition:all .15s}
-.btn-sm:hover{border-color:var(--primary);color:var(--primary)}
-.btn-sm.danger:hover{border-color:var(--red);color:var(--red)}
-
-.main{flex:1;padding:24px;max-width:1100px;margin:0 auto;width:100%}
-
-.snap{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:22px;margin-bottom:22px}
-.snap-comp{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px}
-.snap-main{display:flex;align-items:center;gap:18px;margin-bottom:14px}
-.snap-team{flex:1;font-size:22px;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ---- match snapshot hero ---- */
+.snap{position:relative;overflow:hidden;background:linear-gradient(165deg,var(--card2) 0%,var(--surface) 100%);
+  border:1px solid var(--line2);border-radius:16px;padding:26px 30px;margin-bottom:24px;box-shadow:var(--shadow)}
+.snap::before{content:'';position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(640px 300px at 50% -40%, rgba(61,220,132,.1), transparent 70%)}
+.snap::after{content:'';position:absolute;left:24px;right:24px;top:0;height:2px;border-radius:2px;
+  background:linear-gradient(90deg,var(--turf),var(--gold),transparent);opacity:.65}
+.snap-comp{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1.6px;font-weight:700;margin-bottom:14px}
+.snap-main{display:flex;align-items:center;gap:20px;margin-bottom:16px}
+.snap-team{flex:1;font-family:var(--display-c);font-stretch:82%;font-size:clamp(20px,3vw,30px);font-weight:600;letter-spacing:.5px;
+  text-transform:uppercase;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .snap-team.away{text-align:right}
-.snap-score{font-size:36px;font-weight:800;color:var(--red);min-width:120px;text-align:center;letter-spacing:1px}
-.snap-meta{display:flex;gap:14px;font-size:13px;color:var(--muted);margin-bottom:14px;flex-wrap:wrap}
+.snap-score{font-family:var(--display-c);font-stretch:70%;font-size:clamp(36px,4.6vw,50px);font-weight:700;color:#ffd9dd;
+  min-width:170px;text-align:center;letter-spacing:3px;font-variant-numeric:tabular-nums;line-height:1;padding:10px 14px;
+  border-radius:12px;background:linear-gradient(180deg,rgba(255,77,94,.17),rgba(255,77,94,.04) 60%,rgba(255,77,94,.015));
+  border:1px solid rgba(255,77,94,.3);
+  box-shadow:inset 0 0 22px rgba(255,77,94,.1),0 0 34px -10px rgba(255,77,94,.5);
+  text-shadow:0 0 14px rgba(255,255,255,.3),0 0 30px var(--red-glow)}
+.snap-score.zero{color:#8fa698;text-shadow:none;background:rgba(11,19,14,.7);border-color:var(--line2);
+  box-shadow:inset 0 3px 14px rgba(0,0,0,.5)}
+.snap-meta{display:flex;gap:18px;font-size:13px;color:var(--muted);margin-bottom:16px;flex-wrap:wrap;align-items:center}
 .snap-meta b{color:var(--text);font-weight:600}
 .snap-odds{display:flex;gap:10px;flex-wrap:wrap}
-.chip{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:5px 10px;font-size:12px}
-.chip b{color:var(--primary)}
-.chip-label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-right:4px}
+.snap-odds .chip{padding:7px 12px;font-size:12px}
 
-.badge{display:inline-block;padding:3px 9px;border-radius:3px;font-size:11px;font-weight:700;letter-spacing:.4px}
-.b-live{background:rgba(248,81,73,.2);color:var(--red);border:1px solid rgba(248,81,73,.35)}
-.b-up{background:rgba(210,153,34,.2);color:var(--orange);border:1px solid rgba(210,153,34,.35)}
-.b-ft{background:rgba(63,185,80,.2);color:var(--green);border:1px solid rgba(63,185,80,.35)}
-.b-ht{background:rgba(188,140,255,.2);color:var(--purple);border:1px solid rgba(188,140,255,.35)}
-.b-x{background:rgba(139,148,158,.15);color:var(--muted);border:1px solid var(--border)}
-
-.sec{margin-bottom:24px}
-.sec-hdr{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
-.sec-title{font-size:14px;font-weight:700;letter-spacing:.3px}
-.sec-badge{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:2px 8px;font-size:11px;color:var(--muted)}
-
-.twrap{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-size:12px;min-width:600px}
-th{background:var(--surface);padding:9px 12px;text-align:left;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap}
-td{padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap;font-variant-numeric:tabular-nums}
-tr:last-child td{border-bottom:none}
-tr:hover td{background:rgba(255,255,255,.025)}
-.diff-up{color:var(--green)}
-.diff-down{color:var(--red)}
-
-.tline{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:8px}
-.tev{display:flex;gap:14px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px}
+/* ---- events timeline ---- */
+.tline{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:6px;box-shadow:var(--shadow)}
+.tev{display:flex;gap:14px;align-items:center;padding:11px 14px;border-bottom:1px solid var(--line);font-size:13px;
+  border-radius:8px;transition:background .12s}
 .tev:last-child{border-bottom:none}
-.tev-time{color:var(--muted);font-size:11px;font-family:'Consolas','Monaco',monospace;min-width:72px}
-.tev-min{background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:2px 7px;font-size:11px;color:var(--orange);font-weight:700;min-width:42px;text-align:center}
-.tev-type{font-weight:700;min-width:90px}
+.tev:hover{background:rgba(61,220,132,.04)}
+.tev-time{color:var(--faint);font-size:11px;font-family:var(--mono);min-width:76px}
+.tev-min{background:var(--inset);border:1px solid var(--line2);border-radius:6px;padding:3px 8px;font-size:11px;
+  color:var(--orange);font-weight:700;min-width:46px;text-align:center;font-family:var(--mono)}
+.tev-type{font-weight:700;min-width:100px;letter-spacing:.3px}
 .tev-type.goal{color:var(--red)}
 .tev-type.status{color:var(--purple)}
 .tev-detail{color:var(--text);flex:1}
 
-.empty{color:var(--muted);padding:24px;text-align:center;font-size:13px;background:var(--card);border:1px solid var(--border);border-radius:var(--r)}
-.notfound{text-align:center;padding:60px 20px}
-.notfound h2{font-size:20px;margin-bottom:10px}
-.notfound p{color:var(--muted);margin-bottom:20px}
-.notfound a{color:var(--primary);text-decoration:none;font-weight:600}
-.notfound a:hover{text-decoration:underline}
-.toast{position:fixed;bottom:20px;right:20px;background:#3d1e20;border:1px solid var(--red);border-radius:var(--r);padding:12px 16px;color:var(--red);font-size:13px;display:none;z-index:999}
+.notfound{text-align:center;padding:70px 20px}
+.notfound h2{font-family:var(--display);font-size:24px;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px}
+.notfound p{color:var(--muted);margin-bottom:22px}
 </style>
 </head>
 <body>
+<div class="grain" aria-hidden="true"></div>
+<div class="floodglow" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
 
-<header class="hdr">
-  <a class="hdr-back" href="/">&larr; Quay lại</a>
-  <div class="hdr-title" id="hdrTitle">Đang tải…</div>
-  <a class="btn-sm" id="analyzeBtn" href="#" style="text-decoration:none">🔍 Phân tích</a>
+<header class="topbar">
+  <a class="brand" href="/">
+    <span class="brand-mark">⚽</span>
+    <span class="brand-name">Foot<b>ball</b>&nbsp;Ops</span>
+  </a>
+  <a class="btn-sm" href="/" style="margin-left:6px">← Quay lại</a>
+  <div class="topbar-spacer"></div>
+  <div class="topbar-status" style="max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+    <span id="hdrTitle">Đang tải…</span>
+  </div>
+  <a class="btn-sm" id="analyzeBtn" href="#">🔍 Phân tích</a>
   <button class="btn-sm" onclick="goDisguise()">🔄 Đổi</button>
   <form method="post" action="/logout" style="margin:0">
     <button class="btn-sm danger" type="submit">Đăng xuất</button>
   </form>
 </header>
 
-<div class="main" id="main">
+<div class="main" id="main" style="max-width:1150px">
   <div class="empty">Đang tải dữ liệu trận đấu…</div>
 </div>
 
@@ -163,7 +149,7 @@ function renderNotFound(){
   document.getElementById('main').innerHTML =
     '<div class="notfound"><h2>Không tìm thấy trận đấu</h2>'+
     '<p>Trận đấu này có thể đã bị xóa hoặc ID không hợp lệ.</p>'+
-    '<a href="/">← Về dashboard</a></div>';
+    '<a class="btn" href="/">← Về dashboard</a></div>';
 }
 
 function renderSnapshot(m){
@@ -179,11 +165,11 @@ function renderSnapshot(m){
     ? '<div class="chip"><span class="chip-label">1X2</span><b>'+m.odds_1+'</b> / '+(m.odds_x||'?')+' / <b>'+m.odds_2+'</b></div>'
     : '';
   return ''+
-    '<div class="snap">'+
+    '<div class="snap reveal">'+
       '<div class="snap-comp">'+escHtml(m.competition)+'</div>'+
       '<div class="snap-main">'+
         '<div class="snap-team">'+escHtml(m.home)+'</div>'+
-        '<div class="snap-score">'+m.home_score+' - '+m.away_score+'</div>'+
+        '<div class="snap-score'+(m.home_score===0&&m.away_score===0?' zero':'')+'">'+m.home_score+' - '+m.away_score+'</div>'+
         '<div class="snap-team away">'+escHtml(m.away)+'</div>'+
       '</div>'+
       '<div class="snap-meta">'+
@@ -203,8 +189,8 @@ function diff(curr,prev){
 
 function renderOddsHistory(rows){
   const count = rows.length;
-  let html = '<div class="sec"><div class="sec-hdr">'+
-    '<span class="sec-title">📊 Biến động kèo</span>'+
+  let html = '<div class="sec reveal reveal-d1"><div class="sec-hdr">'+
+    '<span class="sec-title">Biến động kèo</span>'+
     '<span class="sec-badge">'+count+'</span></div>';
   if(!count){
     html += '<div class="empty">Chưa ghi nhận biến động</div></div>';
@@ -237,8 +223,8 @@ function renderOddsHistory(rows){
 
 function renderEvents(rows){
   const count=rows.length;
-  let html = '<div class="sec"><div class="sec-hdr">'+
-    '<span class="sec-title">⏱ Diễn biến trận</span>'+
+  let html = '<div class="sec reveal reveal-d2"><div class="sec-hdr">'+
+    '<span class="sec-title">Diễn biến trận</span>'+
     '<span class="sec-badge">'+count+'</span></div>';
   if(!count){
     html += '<div class="empty">Chưa ghi nhận sự kiện</div></div>';
@@ -261,6 +247,7 @@ function renderEvents(rows){
 }
 
 async function load(){
+  if (document.hidden) return;  // v44: skip when tab hidden
   const [m, odds, events] = await Promise.all([
     apiFetch('/api/matches/'+encodeURIComponent(matchId)),
     apiFetch('/api/matches/'+encodeURIComponent(matchId)+'/odds-history'),
